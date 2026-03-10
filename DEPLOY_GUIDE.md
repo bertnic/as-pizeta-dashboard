@@ -1,28 +1,32 @@
-# PharmaAnalytics Dashboard – Deployment Guide
+# PharmaAnalytics Dashboard – Deployment Guide (Google Cloud Run)
 
-## Architettura
+## Architettura Serverless
 
 ```
-Internet → Nginx (443/SSL) → Podman Container (porta 5000, Flask+React)
+Internet → Google Cloud Run (Custom Domain as.bertellini.org)
                            ↓
-                     /data (volume persistente: utenti, dati PDF)
+                  GCS FUSE (Volume persistente: utenti, dati PDF)
 ```
 
-Il container gira in rete `host` per coesistere con WireGuard senza conflitti.
+Il progetto gira su **Google Cloud Run** in modalità serverless. Non richiede gestione del server, VM o Nginx manuale. Il container scale a zero quando inattivo.
 
 ---
 
-## 1. Prerequisiti sul server (f1-micro, Debian/Ubuntu)
+## 1. Prerequisiti & Setup Iniziale
+
+I comandi seguenti presuppongono che tu abbia installato la `gcloud` CLI e autenticato l'account tramite `gcloud auth login`.
 
 ```bash
-# Installa Podman se non presente
-sudo apt-get install -y podman
+# Sostituisci con il tuo Project ID
+export PROJECT_ID="TUO-PROJECT-ID"
+gcloud config set project $PROJECT_ID
 
-# Installa Nginx
-sudo apt-get install -y nginx
-
-# Installa Certbot per SSL Let's Encrypt
-sudo apt-get install -y certbot python3-certbot-nginx
+# Abilita le API necessarie
+gcloud services enable \
+  run.googleapis.com \
+  artifactregistry.googleapis.com \
+  storage.googleapis.com \
+  cloudbuild.googleapis.com
 ```
 
 ---
@@ -36,155 +40,81 @@ sudo apt-get install -y certbot python3-certbot-nginx
    ```
    https://as.bertellini.org/pizeta/dashboard/auth/callback
    ```
-5. Salva `Client ID` e `Client Secret`
+5. Salva `Client ID` e `Client Secret` per lo step 4.
 
 ---
 
-## 3. Build e avvio del container
+## 3. Creazione Bucket (Persistenza Dati)
+
+Dato che Cloud Run è stateless, usiamo **Google Cloud Storage FUSE** per montare la directory `/data` del container come volume.
 
 ```bash
-# Sul server, clona/copia il progetto
-cd /opt/pharma-dashboard
+export BUCKET_NAME="as-pizeta-dashboard-data"
 
-# Build immagine
-podman build -t pharma-dashboard:latest .
+# Crea il bucket in europa (es. europe-west1 o europe-south1)
+gcloud storage buckets create gs://$BUCKET_NAME --location=europe-west1
 
-# Crea directory dati persistente
-sudo mkdir -p /opt/pharma-data
-sudo chown 1001:1001 /opt/pharma-data
+# Ottieni l'account di servizio di default per il Compute Engine
+export PROJECT_NUM=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
+export SVC_ACCOUNT="${PROJECT_NUM}-compute@developer.gserviceaccount.com"
 
-# Avvio container
-podman run -d \
-  --name pharma-dashboard \
-  --restart=always \
-  -p 127.0.0.1:5000:5000 \
-  -v /opt/pharma-data:/data:Z \
-  -e GOOGLE_CLIENT_ID="IL_TUO_CLIENT_ID" \
-  -e GOOGLE_CLIENT_SECRET="IL_TUO_CLIENT_SECRET" \
-  -e SECRET_KEY="$(openssl rand -hex 32)" \
-  pharma-dashboard:latest
+# Assegna i permessi per leggere e scrivere nel bucket
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:$SVC_ACCOUNT" \
+  --role="roles/storage.objectAdmin"
 ```
-
-> **Nota**: usa `-p 127.0.0.1:5000:5000` così Flask è accessibile solo da Nginx (non esposto pubblicamente).
 
 ---
 
-## 4. Systemd service per Podman (auto-start)
+## 4. Build e Deploy su Cloud Run
+
+Entra nella directory del container, `pharma-dashboard`, e usa il comando deploy integrato. Google Cloud CLI utilizzerà Cloud Build per impacchettare il Dockerfile in remoto ed avviare il servizio.
 
 ```bash
-# Genera il service file
-podman generate systemd --new --name pharma-dashboard \
-  > /etc/systemd/system/pharma-dashboard.service
+cd ./pharma-dashboard
 
-sudo systemctl daemon-reload
-sudo systemctl enable --now pharma-dashboard
+# Definisci le variabili sensibili
+export GOOGLE_CLIENT_ID="IL_TUO_CLIENT_ID"
+export GOOGLE_CLIENT_SECRET="IL_TUO_CLIENT_SECRET"
+export SECRET_KEY="$(openssl rand -hex 32)"
+
+# Deploy su Cloud Run
+gcloud run deploy pharma-dashboard \
+  --source . \
+  --region europe-west1 \
+  --execution-environment gen2 \
+  --add-volume=name=bucket-vol,type=cloud-storage,bucket=$BUCKET_NAME \
+  --add-volume-mount=volume=bucket-vol,mount-path=/data \
+  --set-env-vars="GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET},SECRET_KEY=${SECRET_KEY}" \
+  --allow-unauthenticated
 ```
 
 ---
 
-## 5. Nginx + SSL
+## 5. Mappatura Dominio Custom (`as.bertellini.org`)
+
+Per puntare il tuo dominio personalizzato direttamente a Cloud Run:
 
 ```bash
-# Ottieni certificato SSL
-sudo certbot --nginx -d as.bertellini.org
-
-# Copia la configurazione Nginx
-sudo cp nginx/pharma.conf /etc/nginx/sites-available/pharma
-sudo ln -s /etc/nginx/sites-available/pharma /etc/nginx/sites-enabled/
-
-# Aggiorna il server_name nella configurazione
-sudo sed -i 's/server_name _;/server_name as.bertellini.org;/' \
-    /etc/nginx/sites-available/pharma
-
-# Test e reload
-sudo nginx -t && sudo systemctl reload nginx
+gcloud beta run domain-mappings create \
+  --service=pharma-dashboard \
+  --domain=as.bertellini.org \
+  --region=europe-west1
 ```
 
----
+L'output del terminale ti indicherà le modifiche da applicare ai record DNS su **Cloudflare**.
 
-## 6. Coesistenza con WireGuard
-
-WireGuard usa `wg0` (tipicamente `10.x.x.x`). Il container Flask è solo su `127.0.0.1:5000` quindi non ci sono conflitti. Se WireGuard è su `51820/udp` e Nginx su `443/tcp`, non ci sono collisioni di porte.
-
-Verifica firewall:
-```bash
-sudo ufw allow 443/tcp
-sudo ufw allow 80/tcp
-# Non aprire 5000 – rimane interno
-```
+### Configurazione su Cloudflare:
+1. Vai su **DNS** > **Records**.
+2. Aggiungi i record `CNAME` o `A / AAAA` per il dominio `as` (`as.bertellini.org`) forniti da Google.
+3. Imposta **Proxy status** a **DNS Only** finché i certificati SSL generati da Google (Managed SSL) non saranno operativi.
+4. Una volta che Cloud Run risulterà associato, l'app sarà perfettamente accessibile a:
+   👉 `https://as.bertellini.org/pizeta/dashboard`
 
 ---
 
-## 7. Primo accesso e 2FA
+## Note Aggiuntive e Costi
 
-1. Vai su `https://as.bertellini.org/pizeta/dashboard`
-2. Clicca "Accedi con Google" → autenticati
-3. Al primo accesso viene mostrato il QR code TOTP
-4. Scansiona con **Google Authenticator**, **Authy**, o altra app TOTP
-5. Inserisci il codice a 6 cifre → accesso completato
-
-Da questo momento ogni login richiederà il codice TOTP dal telefono.
-
----
-
-## 8. Caricamento mensile PDF
-
-1. Accedi alla dashboard
-2. Menu laterale → **"Carica PDF"**
-3. Seleziona il PDF mensile nel formato QIMS
-4. Il sistema estrae e aggiunge i dati ai grafici
-5. Il dataset viene persistito in `/data/pharma_data.json`
-
----
-
-## 9. Aggiornamento applicazione
-
-```bash
-cd /opt/pharma-dashboard
-git pull  # se versionato
-
-# Rebuild
-podman build -t pharma-dashboard:latest .
-
-# Restart
-podman stop pharma-dashboard
-podman rm pharma-dashboard
-# Rilancia con il comando run del punto 3
-sudo systemctl restart pharma-dashboard
-```
-
----
-
-## 10. Backup dati
-
-```bash
-# Backup manuale
-tar czf backup-$(date +%Y%m%d).tar.gz /opt/pharma-data/
-
-# Cron giornaliero (opzionale)
-echo "0 2 * * * root tar czf /backup/pharma-$(date +\%Y\%m\%d).tar.gz /opt/pharma-data/" \
-  >> /etc/crontab
-```
-
----
-
-## Variabili d'ambiente richieste
-
-| Variabile | Descrizione |
-|---|---|
-| `GOOGLE_CLIENT_ID` | OAuth Client ID da Google Cloud |
-| `GOOGLE_CLIENT_SECRET` | OAuth Client Secret da Google Cloud |
-| `SECRET_KEY` | Chiave casuale per le sessioni Flask (min 32 char) |
-
----
-
-## Struttura file nel container
-
-```
-/app/
-  app.py              ← Backend Flask
-  frontend/dist/      ← React compilato
-/data/
-  users.json          ← Utenti e segreti TOTP
-  pharma_data.json    ← Dati PDF caricati
-```
+- **Costi Server**: L'ambiente Free Tier copre milioni di richieste al mese, portando di fatto il costo per traffico limitato a `€0/mese`.
+- **Primo Accesso (2FA)**: Al primo login verrà generato un QR Code TOTP (da scannerizzare tramite Google Authenticator, Authy o simili). Successivamente ti verrà chiesta l'OTP ad ogni nuovo accesso.
+- **Aggiornamento App**: Per applicare modifiche a Vue/Flask in futuro, sarà sufficiente usare di nuovo `gcloud run deploy --source .` dalla cartella di progetto. Cloud Build aggiornerà automaticamente l'ultima revisione in zero-downtime.

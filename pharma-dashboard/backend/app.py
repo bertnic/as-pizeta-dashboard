@@ -18,7 +18,7 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 Session(app)
 
-app.wsgi_app = ProxyFix(app.wsgi_app, x_prefix=1, x_for=1, x_host=1, x_proto=1)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_host=1, x_proto=1)
 
 # --- Google OAuth ---
 oauth = OAuth(app)
@@ -193,6 +193,18 @@ def serve(path):
     if path and os.path.exists(os.path.join(app.static_folder, path)):
         return send_from_directory(app.static_folder, path)
     return send_from_directory(app.static_folder, "index.html")
+
+# --- Cloud Run Subpath Mounting ---
+from werkzeug.middleware.dispatcher import DispatcherMiddleware
+
+dummy_app = Flask('dummy')
+@dummy_app.route('/')
+def not_found():
+    return "Not Found", 404
+
+application = DispatcherMiddleware(dummy_app, {
+    '/pizeta/dashboard': app
+})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
