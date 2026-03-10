@@ -33,6 +33,6 @@ RUN mkdir -p /data /tmp/flask_sessions
 RUN useradd -m -u 1001 pharma && chown -R pharma:pharma /app /data /tmp/flask_sessions
 USER pharma
 
-EXPOSE 5000
+EXPOSE 8080
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "120", "app:application"]
+CMD gunicorn --bind 0.0.0.0:${PORT:-8080} --workers 2 --timeout 120 app:application

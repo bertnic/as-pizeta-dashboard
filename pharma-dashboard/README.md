@@ -1,4 +1,4 @@
-# PharmaAnalytics Dashboard – Deployment Guide
+# as-pizeta-dashboard – Deployment Guide
 
 ## Architettura
 
@@ -44,10 +44,10 @@ sudo apt-get install -y certbot python3-certbot-nginx
 
 ```bash
 # Sul server, clona/copia il progetto
-cd /opt/pharma-dashboard
+cd /opt/as-pizeta-dashboard
 
 # Build immagine
-podman build -t pharma-dashboard:latest .
+podman build -t as-pizeta-dashboard:latest .
 
 # Crea directory dati persistente
 sudo mkdir -p /opt/pharma-data
@@ -55,14 +55,14 @@ sudo chown 1001:1001 /opt/pharma-data
 
 # Avvio container
 podman run -d \
-  --name pharma-dashboard \
+  --name as-pizeta-dashboard \
   --restart=always \
   -p 127.0.0.1:5000:5000 \
   -v /opt/pharma-data:/data:Z \
   -e GOOGLE_CLIENT_ID="IL_TUO_CLIENT_ID" \
   -e GOOGLE_CLIENT_SECRET="IL_TUO_CLIENT_SECRET" \
   -e SECRET_KEY="$(openssl rand -hex 32)" \
-  pharma-dashboard:latest
+  as-pizeta-dashboard:latest
 ```
 
 > **Nota**: usa `-p 127.0.0.1:5000:5000` così Flask è accessibile solo da Nginx (non esposto pubblicamente).
@@ -73,11 +73,11 @@ podman run -d \
 
 ```bash
 # Genera il service file
-podman generate systemd --new --name pharma-dashboard \
-  > /etc/systemd/system/pharma-dashboard.service
+podman generate systemd --new --name as-pizeta-dashboard \
+  > /etc/systemd/system/as-pizeta-dashboard.service
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now pharma-dashboard
+sudo systemctl enable --now as-pizeta-dashboard
 ```
 
 ---
@@ -140,17 +140,17 @@ Da questo momento ogni login richiederà il codice TOTP dal telefono.
 ## 9. Aggiornamento applicazione
 
 ```bash
-cd /opt/pharma-dashboard
+cd /opt/as-pizeta-dashboard
 git pull  # se versionato
 
 # Rebuild
-podman build -t pharma-dashboard:latest .
+podman build -t as-pizeta-dashboard:latest .
 
 # Restart
-podman stop pharma-dashboard
-podman rm pharma-dashboard
+podman stop as-pizeta-dashboard
+podman rm as-pizeta-dashboard
 # Rilancia con il comando run del punto 3
-sudo systemctl restart pharma-dashboard
+sudo systemctl restart as-pizeta-dashboard
 ```
 
 ---

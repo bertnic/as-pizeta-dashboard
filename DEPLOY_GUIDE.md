@@ -1,4 +1,4 @@
-# PharmaAnalytics Dashboard – Deployment Guide (Google Cloud Run)
+# as-pizeta-dashboard – Deployment Guide (Google Cloud Run)
 
 ## Architettura Serverless
 
@@ -18,7 +18,7 @@ I comandi seguenti presuppongono che tu abbia installato la `gcloud` CLI e auten
 
 ```bash
 # Sostituisci con il tuo Project ID
-export PROJECT_ID="TUO-PROJECT-ID"
+export PROJECT_ID="as-pizeta-dashboard"
 gcloud config set project $PROJECT_ID
 
 # Abilita le API necessarie
@@ -79,7 +79,7 @@ export GOOGLE_CLIENT_SECRET="IL_TUO_CLIENT_SECRET"
 export SECRET_KEY="$(openssl rand -hex 32)"
 
 # Deploy su Cloud Run
-gcloud run deploy pharma-dashboard \
+gcloud run deploy as-pizeta-dashboard \
   --source . \
   --region europe-west1 \
   --execution-environment gen2 \
@@ -97,7 +97,7 @@ Per puntare il tuo dominio personalizzato direttamente a Cloud Run:
 
 ```bash
 gcloud beta run domain-mappings create \
-  --service=pharma-dashboard \
+  --service=as-pizeta-dashboard \
   --domain=as.bertellini.org \
   --region=europe-west1
 ```

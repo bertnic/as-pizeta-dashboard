@@ -8,7 +8,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
 import pdfplumber
 
-app = Flask(__name__, static_folder="../frontend/dist", static_url_path="/")
+app = Flask(__name__, static_folder="frontend/dist", static_url_path="")
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_FILE_DIR"] = "/tmp/flask_sessions"
@@ -79,7 +79,7 @@ def auth_callback():
     token = google.authorize_access_token()
     userinfo = token.get("userinfo")
     if not userinfo:
-        return redirect("/#/auth?error=no_userinfo")
+        return redirect(url_for("serve", path="") + "#/auth?error=no_userinfo")
     email = userinfo["email"]
     users = load_users()
     if email not in users:
@@ -89,7 +89,7 @@ def auth_callback():
         save_users(users)
     session["pending_user"] = {"email": email, "name": users[email]["name"], "picture": users[email]["picture"]}
     session["authenticated"] = False
-    return redirect("/#/2fa")
+    return redirect(url_for("serve", path="") + "#/2fa")
 
 @app.route("/auth/2fa/qr")
 def get_qr():
@@ -190,8 +190,11 @@ def parse_pdf(file_obj):
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def serve(path):
-    if path and os.path.exists(os.path.join(app.static_folder, path)):
+    # If the path points to an existing file in static_folder, serve it
+    full_path = os.path.join(app.static_folder, path)
+    if path and os.path.exists(full_path) and os.path.isfile(full_path):
         return send_from_directory(app.static_folder, path)
+    # Otherwise, fallback to index.html for React Router
     return send_from_directory(app.static_folder, "index.html")
 
 # --- Cloud Run Subpath Mounting ---
@@ -200,11 +203,12 @@ from werkzeug.middleware.dispatcher import DispatcherMiddleware
 dummy_app = Flask('dummy')
 @dummy_app.route('/')
 def not_found():
-    return "Not Found", 404
+    return "PharmaDashboard Root - Use /pizeta/dashboard/ to access the app.", 404
 
 application = DispatcherMiddleware(dummy_app, {
     '/pizeta/dashboard': app
 })
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, debug=False)
