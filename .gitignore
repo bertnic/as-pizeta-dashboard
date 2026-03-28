@@ -6,3 +6,5 @@ __pycache__/
 app/frontend/node_modules/
 app/frontend/dist/
 app/frontend/.vite/
+# Local dev SQLite + legacy JSON (see README)
+var/

@@ -35,14 +35,17 @@ def _schema_path() -> Path:
     )
 
 
-def sqlite_path() -> Path:
+def database_file_path() -> Path:
+    """Path to the SQLite file (no I/O). Same resolution as connect()."""
     if raw := os.environ.get("SQLITE_PATH"):
-        p = Path(raw)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        return p
-    data_dir = Path(os.environ.get("DATA_DIR", "/data"))
-    data_dir.mkdir(parents=True, exist_ok=True)
-    return data_dir / "pizeta.sqlite"
+        return Path(raw)
+    return Path(os.environ.get("DATA_DIR", "/data")) / "pizeta.sqlite"
+
+
+def sqlite_path() -> Path:
+    p = database_file_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
 
 
 def legacy_users_path() -> Path:

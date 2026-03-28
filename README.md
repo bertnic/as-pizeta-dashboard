@@ -7,9 +7,28 @@ The backend relies on Google OAuth for authentication, issues a 2FA token using 
 
 **Local dev:** from `app/frontend/` run `npm install` and `npm run dev` (Vite proxies `/auth` and `/api` to Flask). From `app/backend/` install `requirements.txt`, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `SECRET_KEY`, then run `python app.py` (default **8080**, matching the Vite proxy).
 
-**Data:** SQLite file **`pizeta.sqlite`** under `DATA_DIR` (default `/data` in containers, or set explicitly). Override with **`SQLITE_PATH`**. Canonical DDL lives in mono **`packages/db/migrations/001_dashboard_app.sql`**; the same file is bundled as `app/backend/001_dashboard_app.sql` for Docker. If legacy **`users.json`** / **`pharma_data.json`** exist under `DATA_DIR` on first start, they are imported once into SQLite.
-
 **Tests:** from repo root, `pip install -r requirements-dev.txt` then `pytest tests/`.
+
+### Local database (SQLite) — what exists?
+
+- **The file is not in Git.** `pizeta.sqlite` appears on disk only after the backend has run and touched the DB (first OAuth flow, `/api/data`, upload, etc.).
+- **Location:** `SQLITE_PATH` if set, otherwise `DATA_DIR/pizeta.sqlite`.  
+  - **Containers / server / Cloud Run:** use **`DATA_DIR=/data`** (or mount a volume on `/data`) — same file name everywhere.  
+  - **Your laptop:** avoid `/data` (often not writable). From `app/backend/`:
+    ```bash
+    export DATA_DIR="$(cd ../.. && pwd)/var"
+    python dev_db_status.py    # shows path, tables, row counts (before/after first run)
+    ```
+- **Tables** (created automatically from schema on first use):
+
+| Table | Purpose |
+|-------|--------|
+| `dashboard_user` | One row per Google user who has signed in; holds TOTP secret and profile fields. |
+| `dashboard_upload` | One row per PDF upload; `rows_json` stores the parsed lines/numbers as JSON. |
+
+- **Row counts:** `0` until someone logs in or uploads (unless legacy `users.json` / `pharma_data.json` in `DATA_DIR` were imported on first start).
+
+Canonical DDL: mono **`packages/db/migrations/001_dashboard_app.sql`** (bundled copy: `app/backend/001_dashboard_app.sql`).
 
 ## Usage
 
