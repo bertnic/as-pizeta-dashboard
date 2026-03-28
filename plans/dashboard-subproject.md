@@ -57,3 +57,7 @@ Working notes for bringing the legacy dashboard into the mono tree. **Source rev
 
 - Legacy root README: pharma analytics, OAuth, TOTP, PDF scraping.
 - Mono rules: `.cursor/rules/pizeta-workspace.mdc` (copy discipline, one subproject at a time).
+
+## 6. Unified platform database (`pizeta.sqlite`)
+
+Target **single file** **`pizeta.sqlite`**, shared table names across apps (`users`, `products`, `sales`, `target`, Strame `hcp` / `structures` / `visits` / `visit_plan`, Notaspese `receipts`), and explanation of **`dashboard_upload`** vs **`import_batch`** / **`fact_measure`**: **[packages/db/plans/unified-pizeta-sqlite.md](../../../packages/db/plans/unified-pizeta-sqlite.md)** (mono repo).

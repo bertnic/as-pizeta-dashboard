@@ -30,6 +30,8 @@ The backend relies on Google OAuth for authentication, issues a 2FA token using 
 
 Canonical DDL: mono **`packages/db/migrations/001_dashboard_app.sql`** (bundled copy: `app/backend/001_dashboard_app.sql`).
 
+**Platform evolution (single `pizeta.sqlite`, `users` / `sales` / `products`, Strame & Notaspese tables):** mono **`packages/db/plans/unified-pizeta-sqlite.md`**.
+
 ### Pharma datamart (Excel/PDF → analytics SQLite)
 
 Legacy IMS-style data pipeline lives in **`data/`**: `etl_build_db.py`, `parsers.py`, and related scripts build **`pharma_datamart.sqlite`** (`import_batch`, `fact_measure`, `TARGET`, `PRODOTTI`, `FATTURATO`). Schema baseline: **`packages/db/migrations/002_pharma_datamart.sql`**. See **[data/README.md](data/README.md)** for copying from `~/Development/projects/as/pizeta/dashboard/data` or re-running ETL. The Flask UI does **not** query this file yet — it is the source for a future read-only API.
