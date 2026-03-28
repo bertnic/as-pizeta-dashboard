@@ -5,7 +5,7 @@ The backend relies on Google OAuth for authentication, issues a 2FA token using 
 
 **Layout:** `app/backend/` (Flask), `app/frontend/` (Vite/React). Build the container from this repository root (`docker build` / `podman build` context = `.`).
 
-**Local dev:** from `app/frontend/` run `npm install` and `npm run dev` (Vite proxies API/auth to the Flask port). From `app/backend/` install `requirements.txt`, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `SECRET_KEY`, then run `python app.py`.
+**Local dev:** from `app/frontend/` run `npm install` and `npm run dev` (Vite proxies `/auth` and `/api` to Flask). From `app/backend/` install `requirements.txt`, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `SECRET_KEY`, then run `python app.py` (default **8080**, matching the Vite proxy).
 
 ## Usage
 
@@ -15,8 +15,8 @@ The backend relies on Google OAuth for authentication, issues a 2FA token using 
 
 ## Deployment
 
-- **Google Cloud Run:** see [`DEPLOY_GUIDE.md`](DEPLOY_GUIDE.md).
-- **Podman + Nginx (VM):** follow the sections below.
+- **Google Cloud Run:** [`DEPLOY_GUIDE.md`](DEPLOY_GUIDE.md) (only Cloud Run; build context = repo root).
+- **Podman + Nginx (VM):** sections below (same `Dockerfile` at repo root).
 
 ---
 

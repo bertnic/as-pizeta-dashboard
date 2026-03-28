@@ -1,5 +1,7 @@
 __pycache__/
 *.py[cod]
+.DS_Store
+*.tar.gz
 app/frontend/node_modules/
 app/frontend/dist/
 app/frontend/.vite/

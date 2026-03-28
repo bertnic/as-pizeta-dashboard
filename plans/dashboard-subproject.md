@@ -31,8 +31,8 @@ Working notes for bringing the legacy dashboard into the mono tree. **Source rev
 
 ### Phase B — Developer experience
 
-- Single **root-level or app-level** doc for “how to run dashboard from mono” (env vars, `SECRET_KEY`, Google keys, `/data` volume).
-- Consolidate or cross-link the two deployment guides so mono does not carry conflicting “source of truth” without a label (e.g. `DEPLOY_PODMAN.md` vs `DEPLOY_CLOUD_RUN.md`).
+- Single **root-level or app-level** doc for “how to run dashboard from mono” (env vars, `SECRET_KEY`, Google keys, `/data` volume). **Partial:** [GETTING_STARTED.md](../../../docs/GETTING_STARTED.md) points at `apps/dashboard/` + `app/backend` / `app/frontend`; app `README.md` covers local dev and Podman.
+- Consolidate or cross-link the two deployment guides so mono does not carry conflicting “source of truth” without a label (e.g. `DEPLOY_PODMAN.md` vs `DEPLOY_CLOUD_RUN.md`). **Partial:** `DEPLOY_GUIDE.md` is explicitly **Cloud Run only** with a pointer to README for Podman; optional future split into `DEPLOY_CLOUD_RUN.md` / `DEPLOY_PODMAN.md` if docs grow.
 
 ### Phase C — Platform alignment
 

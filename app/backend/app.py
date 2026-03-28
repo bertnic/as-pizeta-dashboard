@@ -208,7 +208,7 @@ from werkzeug.middleware.dispatcher import DispatcherMiddleware
 dummy_app = Flask('dummy')
 @dummy_app.route('/')
 def not_found():
-    return "PharmaDashboard Root - Use /pizeta/dashboard/ to access the app.", 404
+    return "Pizeta — use /pizeta/dashboard/ to access the dashboard app.", 404
 
 application = DispatcherMiddleware(dummy_app, {
     '/pizeta/dashboard': app

@@ -1,4 +1,6 @@
-# as-pizeta-dashboard – Deployment Guide (Google Cloud Run)
+# as-pizeta-dashboard — Deploy su Google Cloud Run
+
+> **Solo Cloud Run.** Per Podman / VM + Nginx vedi il README del repository (sezione “Podman deployment”).
 
 ## Architettura Serverless
 
@@ -117,4 +119,4 @@ L'output del terminale ti indicherà le modifiche da applicare ai record DNS su 
 
 - **Costi Server**: L'ambiente Free Tier copre milioni di richieste al mese, portando di fatto il costo per traffico limitato a `€0/mese`.
 - **Primo Accesso (2FA)**: Al primo login verrà generato un QR Code TOTP (da scannerizzare tramite Google Authenticator, Authy o simili). Successivamente ti verrà chiesta l'OTP ad ogni nuovo accesso.
-- **Aggiornamento App**: Per applicare modifiche a Vue/Flask in futuro, sarà sufficiente usare di nuovo `gcloud run deploy --source .` dalla cartella di progetto. Cloud Build aggiornerà automaticamente l'ultima revisione in zero-downtime.
+- **Aggiornamento App**: Per applicare modifiche a React (Vite) / Flask in futuro, sarà sufficiente usare di nuovo `gcloud run deploy --source .` dalla root del repository. Cloud Build aggiornerà automaticamente l'ultima revisione in zero-downtime.
