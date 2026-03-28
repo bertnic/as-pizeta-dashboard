@@ -1,0 +1,2 @@
+-r app/backend/requirements.txt
+pytest>=8.0

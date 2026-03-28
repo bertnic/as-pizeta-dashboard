@@ -7,6 +7,10 @@ The backend relies on Google OAuth for authentication, issues a 2FA token using 
 
 **Local dev:** from `app/frontend/` run `npm install` and `npm run dev` (Vite proxies `/auth` and `/api` to Flask). From `app/backend/` install `requirements.txt`, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `SECRET_KEY`, then run `python app.py` (default **8080**, matching the Vite proxy).
 
+**Data:** SQLite file **`pizeta.sqlite`** under `DATA_DIR` (default `/data` in containers, or set explicitly). Override with **`SQLITE_PATH`**. Canonical DDL lives in mono **`packages/db/migrations/001_dashboard_app.sql`**; the same file is bundled as `app/backend/001_dashboard_app.sql` for Docker. If legacy **`users.json`** / **`pharma_data.json`** exist under `DATA_DIR` on first start, they are imported once into SQLite.
+
+**Tests:** from repo root, `pip install -r requirements-dev.txt` then `pytest tests/`.
+
 ## Usage
 
 1. Authenticate using Google OAuth
@@ -27,7 +31,7 @@ The backend relies on Google OAuth for authentication, issues a 2FA token using 
 ```
 Internet → Nginx (443/SSL) → Podman Container (porta 8080, Flask+React)
                            ↓
-                     /data (volume persistente: utenti, dati PDF)
+                     /data (volume persistente: pizeta.sqlite)
 ```
 
 Il container gira in rete `host` per coesistere con WireGuard senza conflitti.
@@ -160,7 +164,7 @@ Da questo momento ogni login richiederà il codice TOTP dal telefono.
 2. Menu laterale → **"Carica PDF"**
 3. Seleziona il PDF mensile nel formato QIMS
 4. Il sistema estrae e aggiunge i dati ai grafici
-5. Il dataset viene persistito in `/data/pharma_data.json`
+5. Il dataset viene persistito nel database SQLite (`pizeta.sqlite` sotto `/data` di default)
 
 ---
 
@@ -202,6 +206,9 @@ echo "0 2 * * * root tar czf /backup/pharma-$(date +\%Y\%m\%d).tar.gz /opt/pharm
 | `GOOGLE_CLIENT_ID` | OAuth Client ID da Google Cloud |
 | `GOOGLE_CLIENT_SECRET` | OAuth Client Secret da Google Cloud |
 | `SECRET_KEY` | Chiave casuale per le sessioni Flask (min 32 char) |
+| `DATA_DIR` | Directory dati (default `/data`); contiene `pizeta.sqlite` |
+| `SQLITE_PATH` | Percorso file SQLite (opzionale; sovrascrive `DATA_DIR/pizeta.sqlite`) |
+| `DASHBOARD_SCHEMA_SQL` | Percorso DDL personalizzato (opzionale; default file in `app/backend/` o mono `packages/db/migrations/`) |
 
 ---
 
@@ -210,8 +217,9 @@ echo "0 2 * * * root tar czf /backup/pharma-$(date +\%Y\%m\%d).tar.gz /opt/pharm
 ```
 /app/
   app.py              ← Backend Flask
+  db_store.py         ← Accesso SQLite
+  001_dashboard_app.sql
   frontend/dist/      ← React compilato
 /data/
-  users.json          ← Utenti e segreti TOTP
-  pharma_data.json    ← Dati PDF caricati
+  pizeta.sqlite       ← Utenti TOTP + righe PDF (tabelle dashboard_*)
 ```

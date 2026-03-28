@@ -1,4 +1,4 @@
-import os, json, io, re, secrets
+import os, io, re, secrets
 from datetime import timedelta
 from pathlib import Path
 from flask import Flask, request, jsonify, session, redirect, url_for, send_from_directory
@@ -8,6 +8,8 @@ import pyotp, qrcode, base64
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
 import pdfplumber
+
+import db_store
 
 _BACKEND_DIR = Path(__file__).resolve().parent
 # Dev: app/backend/app.py → ../frontend/dist. Docker: /app/app.py → ./frontend/dist
@@ -35,31 +37,6 @@ google = oauth.register(
     client_kwargs={"scope": "openid email profile"},
 )
 
-# --- Authorized users store (file-based for f1-micro) ---
-USERS_FILE = "/data/users.json"
-DATA_FILE  = "/data/pharma_data.json"
-os.makedirs("/data", exist_ok=True)
-
-def load_users():
-    if os.path.exists(USERS_FILE):
-        with open(USERS_FILE) as f:
-            return json.load(f)
-    return {}
-
-def save_users(users):
-    with open(USERS_FILE, "w") as f:
-        json.dump(users, f)
-
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE) as f:
-            return json.load(f)
-    return {"uploads": []}
-
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f)
-
 # --- Auth helpers ---
 def get_current_user():
     return session.get("user")
@@ -86,12 +63,16 @@ def auth_callback():
     if not userinfo:
         return redirect(url_for("serve", path="") + "#/auth?error=no_userinfo")
     email = userinfo["email"]
-    users = load_users()
+    users = db_store.users_as_dict()
     if email not in users:
-        # First time: create TOTP secret
         totp_secret = pyotp.random_base32()
-        users[email] = {"totp_secret": totp_secret, "name": userinfo.get("name",""), "picture": userinfo.get("picture","")}
-        save_users(users)
+        db_store.insert_user(
+            email,
+            totp_secret,
+            userinfo.get("name", "") or "",
+            userinfo.get("picture", "") or "",
+        )
+        users = db_store.users_as_dict()
     session["pending_user"] = {"email": email, "name": users[email]["name"], "picture": users[email]["picture"]}
     session["authenticated"] = False
     return redirect(url_for("serve", path="") + "#/2fa")
@@ -101,7 +82,7 @@ def get_qr():
     pending = session.get("pending_user")
     if not pending:
         return jsonify({"error": "no pending session"}), 401
-    users = load_users()
+    users = db_store.users_as_dict()
     email = pending["email"]
     secret = users[email]["totp_secret"]
     totp = pyotp.TOTP(secret)
@@ -118,7 +99,7 @@ def verify_2fa():
     if not pending:
         return jsonify({"error": "no pending session"}), 401
     code = request.json.get("code","")
-    users = load_users()
+    users = db_store.users_as_dict()
     email = pending["email"]
     totp = pyotp.TOTP(users[email]["totp_secret"])
     if totp.verify(code, valid_window=1):
@@ -142,7 +123,7 @@ def logout():
 @app.route("/api/data")
 @require_auth
 def get_data():
-    return jsonify(load_data())
+    return jsonify(db_store.get_data_payload())
 
 @app.route("/api/upload", methods=["POST"])
 @require_auth
@@ -154,18 +135,13 @@ def upload_pdf():
         return jsonify({"error": "only PDF"}), 400
     label = request.form.get("label", f.filename)
     rows = parse_pdf(f)
-    data = load_data()
-    data["uploads"].append({"label": label, "rows": rows})
-    save_data(data)
+    db_store.append_upload(label, rows)
     return jsonify({"ok": True, "rows": len(rows), "label": label})
 
 @app.route("/api/upload/<int:idx>", methods=["DELETE"])
 @require_auth
 def delete_upload(idx):
-    data = load_data()
-    if 0 <= idx < len(data["uploads"]):
-        data["uploads"].pop(idx)
-        save_data(data)
+    if db_store.delete_upload_by_index(idx):
         return jsonify({"ok": True})
     return jsonify({"error": "not found"}), 404
 

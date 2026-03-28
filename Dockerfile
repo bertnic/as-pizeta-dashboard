@@ -21,7 +21,7 @@ COPY app/backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt gunicorn
 
 # App code
-COPY app/backend/app.py .
+COPY app/backend/app.py app/backend/db_store.py app/backend/001_dashboard_app.sql ./
 
 # Copy built frontend
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
