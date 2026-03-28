@@ -1,0 +1,13 @@
+# Built datamart and secrets (do not commit)
+pharma_datamart.sqlite
+*.sqlite
+credentials.json
+token.json
+drive_import/
+__pycache__/
+.DS_Store
+
+# Source files (copy from legacy machine or Drive); keep out of git unless you intend to version them
+*.xlsx
+*.pdf
+*.xls

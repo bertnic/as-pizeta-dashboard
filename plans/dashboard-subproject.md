@@ -9,7 +9,7 @@ Working notes for bringing the legacy dashboard into the mono tree. **Source rev
 | App shell | `app/` | Flask backend + Vite/React frontend; `Dockerfile` at repo root, Podman-oriented build |
 | Backend | `app/backend/app.py` | Google OAuth (Authlib), TOTP 2FA, sessions, PDF upload path via `pdfplumber`, static SPA from `app/frontend/dist` |
 | Frontend | `app/frontend/` | Vite, pages: Login, 2FA, Dashboard |
-| Data / ETL | SQLite in `DATA_DIR` | **`pizeta.sqlite`** — tables `dashboard_user`, `dashboard_upload` (DDL in mono `packages/db/migrations/001_dashboard_app.sql`). Legacy ETL tree (`data/schema.sql`, parsers) not in this repo yet; target `services/ingest/` + shared schema. |
+| Data / ETL | `data/` + `DATA_DIR` | **App runtime:** `pizeta.sqlite` (`dashboard_*` tables, `001_dashboard_app.sql`). **Analytics mart:** `data/pharma_datamart.sqlite` from ETL (`002_pharma_datamart.sql`, `etl_build_db.py`, `parsers.py`). UI still does not read the mart; ingest target remains `services/ingest/`. |
 | Docs | Root `README.md` (incl. Podman), `DEPLOY_GUIDE.md` (Cloud Run) | Two deployment stories |
 
 **Gap vs platform target:** the app now uses **SQLite** for users and PDF upload rows; the richer **star schema** (`import_batch`, `fact_measure`, …) and ingest pipeline are still future work in `packages/db` + `services/ingest`. Upload rows are still stored as **JSON blobs** per upload until normalized tables exist.
