@@ -21,6 +21,7 @@ It is **separate** from the Flask app runtime DB **`pizeta.sqlite`** (users + PD
 ## Schema source of truth
 
 - Mono: **`packages/db/migrations/002_pharma_datamart.sql`**
+- After you apply **`004_mart_rename_canonical.sql`** on `pizeta.sqlite`, mart tables become **`target`**, **`products`**, **`sales`** — update **`etl_build_db.py`** / **`parsers.py`** SQL to match (or keep a separate DB without 004 until ETL is updated).
 - ETL uses that file automatically when the repo is checked out under `mono/`; otherwise it uses **`schema.sql`** here.
 - Override: `export DATAMART_SCHEMA_SQL=/path/to/002_pharma_datamart.sql`
 
