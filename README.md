@@ -34,6 +34,8 @@ Canonical DDL: mono **`packages/db/migrations/001_dashboard_app.sql`** (bundled 
 
 Legacy IMS-style data pipeline lives in **`data/`**: `etl_build_db.py`, `parsers.py`, and related scripts build **`pharma_datamart.sqlite`** (`import_batch`, `fact_measure`, `TARGET`, `PRODOTTI`, `FATTURATO`). Schema baseline: **`packages/db/migrations/002_pharma_datamart.sql`**. See **[data/README.md](data/README.md)** for copying from `~/Development/projects/as/pizeta/dashboard/data` or re-running ETL. The Flask UI does **not** query this file yet — it is the source for a future read-only API.
 
+**Product catalog (Strame):** `pizeta/strame/user_stories/PRODOTTI/Prodotti.csv` is the best source for display names, codes, and links to align dashboard charts with real SKU metadata — see **`data/README.md`** (reference CSVs).
+
 ## Usage
 
 1. Authenticate using Google OAuth

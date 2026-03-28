@@ -51,6 +51,7 @@ Working notes for bringing the legacy dashboard into the mono tree. **Source rev
 - Does production today use **Cloud Run** only, **VM + Podman**, or both? Plan doc structure should reflect the active path.
 - Production cutover: ensure **`pizeta.sqlite`** is on the persisted volume (replacing any remaining JSON-only deploys).
 - Further flattening (e.g. single `src/`) is optional; `app/backend/` and `app/frontend/` are the current layout.
+- **Product catalog:** Strame `user_stories/PRODOTTI/Prodotti.csv` (plus `MEDICI/HCP.csv`, `STRUTTURE/Strutture.csv`) are reference data outside this repo — see `data/README.md`. Decide when to import `Prodotti.csv` into SQLite (new migration) or `packages/db` seeds for dashboard joins to the mart.
 
 ## 5. References
 

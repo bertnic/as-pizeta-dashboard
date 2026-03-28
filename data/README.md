@@ -33,6 +33,18 @@ It is **separate** from the Flask app runtime DB **`pizeta.sqlite`** (users + PD
 | `verify_pivots.py` | Sanity checks on `pharma_datamart.sqlite` |
 | `sync_from_google.py` | Drive download (needs `credentials.json` / OAuth token — gitignored) |
 
+## Reference tables from Strame user stories (CSV)
+
+These files are **not** in the dashboard repo; they live next to mono under the Strame prototype tree (adjust if your layout differs):
+
+| Path (typical) | Content | Dashboard relevance |
+|----------------|---------|---------------------|
+| `…/pizeta/strame/user_stories/PRODOTTI/Prodotti.csv` | Product **catalog**: `prodotto`, `attivo`, `prezzo`, `quantita`, `unita`, `descrizione`, `link`, **`codice`** | **Highest:** enrich charts/tables (canonical names, AIC/codes, links) and **join** to datamart rows where `fact_measure.product_name` / `PRODOTTI.articolo` / `FATTURATO.articolo` match `prodotto` or `codice`. Prices in CSV are display strings (e.g. `16,00€`); mart `PRODOTTI.prezzo` stays numeric from Excel ETL — treat as two sources until unified. |
+| `…/pizeta/strame/user_stories/MEDICI/HCP.csv` | HCP list: nome, cognome, struttura, provincia, segmentazione, … | Future: visits / targeting; optional geo filters on dashboard when APIs exist. |
+| `…/pizeta/strame/user_stories/STRUTTURE/Strutture.csv` | Structures: nome, indirizzo, provincia, contatti, orari | Future: map / drill-down with sales. |
+
+**Suggested workflow for Prodotti.csv:** symlink or copy into `data/` as `Prodotti.csv` (add an exception in `.gitignore` if you want it local-only), or load into a future table via `packages/db` once the platform owns product master data. Until then, keep the Strame CSV as the **authoritative catalog** for product metadata the dashboard should show.
+
 ## Next step for the product
 
 The **React dashboard** does not yet read `pharma_datamart.sqlite`; it still uses embedded demo data + `pizeta.sqlite` uploads. Wiring API routes to query the datamart (read-only) is a follow-up task.
