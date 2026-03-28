@@ -6,11 +6,11 @@ Working notes for bringing the legacy dashboard into the mono tree. **Source rev
 
 | Area | Location (legacy) | Notes |
 |------|-------------------|--------|
-| App shell | `pharma-dashboard/` | Flask backend + Vite/React frontend, Dockerfile, Podman-oriented build |
-| Backend | `pharma-dashboard/backend/app.py` | Google OAuth (Authlib), TOTP 2FA, sessions, PDF upload path via `pdfplumber`, static SPA from `frontend/dist` |
-| Frontend | `pharma-dashboard/frontend/` | Vite, pages: Login, 2FA, Dashboard |
+| App shell | repo root | Flask backend + Vite/React frontend, `Dockerfile` at root, Podman-oriented build |
+| Backend | `backend/app.py` | Google OAuth (Authlib), TOTP 2FA, sessions, PDF upload path via `pdfplumber`, static SPA from `frontend/dist` |
+| Frontend | `frontend/` | Vite, pages: Login, 2FA, Dashboard |
 | Data / ETL | `data/` | `schema.sql` (SQLite datamart), `parsers.py`, `etl_build_db.py`, `sync_from_google.py`, `verify_pivots.py`, requirements |
-| Docs | Root `README.md`, `DEPLOY_GUIDE.md`, `pharma-dashboard/README.md` | Two deployment stories (Podman/Nginx vs Cloud Run) in `DEPLOY_GUIDE.md` |
+| Docs | Root `README.md` (incl. Podman), `DEPLOY_GUIDE.md` (Cloud Run) | Two deployment stories |
 
 **Important gap vs platform target:** runtime data in the Flask app is largely **JSON files** under `/data` (`users.json`, `pharma_data.json`), while `data/schema.sql` describes a **SQLite** star schema (`import_batch`, `fact_measure`, `TARGET`, `PRODOTTI`, `FATTURATO`). The UI and APIs may still be oriented around JSON uploads rather than the full SQLite pipeline—confirm when wiring.
 
@@ -50,7 +50,7 @@ Working notes for bringing the legacy dashboard into the mono tree. **Source rev
 
 - Does production today use **Cloud Run** only, **VM + Podman**, or both? Plan doc structure should reflect the active path.
 - Is **`pharma_data.json`** still the primary store for uploads, or is SQLite already used in production?
-- Should the frontend stay under `pharma-dashboard/frontend` or flatten to `apps/dashboard/frontend` in a future refactor (only if not using submodule as-is)?
+- Further flattening (e.g. single `src/`) is optional; `backend/` and `frontend/` at repo root are the current layout.
 
 ## 5. References
 

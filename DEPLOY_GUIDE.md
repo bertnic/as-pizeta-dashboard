@@ -68,10 +68,10 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 
 ## 4. Build e Deploy su Cloud Run
 
-Entra nella directory del container, `pharma-dashboard`, e usa il comando deploy integrato. Google Cloud CLI utilizzerà Cloud Build per impacchettare il Dockerfile in remoto ed avviare il servizio.
+Esegui il deploy dalla **root del repository** (dove si trovano `Dockerfile`, `backend/` e `frontend/`). Google Cloud CLI utilizzerà Cloud Build per impacchettare il Dockerfile in remoto ed avviare il servizio.
 
 ```bash
-cd ./pharma-dashboard
+cd /percorso/as-pizeta-dashboard
 
 # Definisci le variabili sensibili
 export GOOGLE_CLIENT_ID="IL_TUO_CLIENT_ID"
