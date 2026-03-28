@@ -1,5 +1,6 @@
 import os, json, io, re, secrets
 from datetime import timedelta
+from pathlib import Path
 from flask import Flask, request, jsonify, session, redirect, url_for, send_from_directory
 from flask_session import Session
 from authlib.integrations.flask_client import OAuth
@@ -8,7 +9,11 @@ from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
 import pdfplumber
 
-app = Flask(__name__, static_folder="frontend/dist", static_url_path="")
+_BACKEND_DIR = Path(__file__).resolve().parent
+# Dev: app/backend/app.py → ../frontend/dist. Docker: /app/app.py → ./frontend/dist
+_cand = _BACKEND_DIR / "frontend" / "dist"
+_FRONTEND_DIST = _cand if _cand.is_dir() else (_BACKEND_DIR.parent / "frontend" / "dist")
+app = Flask(__name__, static_folder=str(_FRONTEND_DIST), static_url_path="")
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_FILE_DIR"] = "/tmp/flask_sessions"

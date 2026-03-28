@@ -1,9 +1,9 @@
 # ── Stage 1: Build React frontend ─────────────────────────────────────────────
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
-COPY frontend/package.json ./
+COPY app/frontend/package.json ./
 RUN npm install
-COPY frontend/ .
+COPY app/frontend/ .
 RUN npm run build
 
 # ── Stage 2: Python backend + compiled frontend ────────────────────────────────
@@ -17,11 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Python deps
-COPY backend/requirements.txt .
+COPY app/backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt gunicorn
 
 # App code
-COPY backend/app.py .
+COPY app/backend/app.py .
 
 # Copy built frontend
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist

@@ -3,7 +3,7 @@
 A full-stack project utilizing React (Vite) and Python (Flask) for tracking and visualizing Pharma Analytics.
 The backend relies on Google OAuth for authentication, issues a 2FA token using TOTP logic, and relies on `pdfplumber` for scraping and persisting sales data.
 
-**Layout:** `backend/` (Flask), `frontend/` (Vite/React). Build the container from this repository root (`docker build` / `podman build` context = `.`).
+**Layout:** `app/backend/` (Flask), `app/frontend/` (Vite/React). Build the container from this repository root (`docker build` / `podman build` context = `.`).
 
 ## Usage
 

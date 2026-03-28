@@ -6,9 +6,9 @@ Working notes for bringing the legacy dashboard into the mono tree. **Source rev
 
 | Area | Location (legacy) | Notes |
 |------|-------------------|--------|
-| App shell | repo root | Flask backend + Vite/React frontend, `Dockerfile` at root, Podman-oriented build |
-| Backend | `backend/app.py` | Google OAuth (Authlib), TOTP 2FA, sessions, PDF upload path via `pdfplumber`, static SPA from `frontend/dist` |
-| Frontend | `frontend/` | Vite, pages: Login, 2FA, Dashboard |
+| App shell | `app/` | Flask backend + Vite/React frontend; `Dockerfile` at repo root, Podman-oriented build |
+| Backend | `app/backend/app.py` | Google OAuth (Authlib), TOTP 2FA, sessions, PDF upload path via `pdfplumber`, static SPA from `app/frontend/dist` |
+| Frontend | `app/frontend/` | Vite, pages: Login, 2FA, Dashboard |
 | Data / ETL | `data/` | `schema.sql` (SQLite datamart), `parsers.py`, `etl_build_db.py`, `sync_from_google.py`, `verify_pivots.py`, requirements |
 | Docs | Root `README.md` (incl. Podman), `DEPLOY_GUIDE.md` (Cloud Run) | Two deployment stories |
 
@@ -50,7 +50,7 @@ Working notes for bringing the legacy dashboard into the mono tree. **Source rev
 
 - Does production today use **Cloud Run** only, **VM + Podman**, or both? Plan doc structure should reflect the active path.
 - Is **`pharma_data.json`** still the primary store for uploads, or is SQLite already used in production?
-- Further flattening (e.g. single `src/`) is optional; `backend/` and `frontend/` at repo root are the current layout.
+- Further flattening (e.g. single `src/`) is optional; `app/backend/` and `app/frontend/` are the current layout.
 
 ## 5. References
 
