@@ -226,6 +226,36 @@ def test_build_dashboard_api_payload_target_respects_product_filter():
         conn.close()
 
 
+def test_build_dashboard_api_payload_includes_products_series_with_target():
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(_mart_ddl_with_target())
+    conn.executemany(
+        "INSERT INTO products (catalog_id, articolo, prezzo) VALUES (?, ?, ?)",
+        [("1", "A", 1.0), ("2", "B", 1.0)],
+    )
+    conn.executemany(
+        """INSERT INTO sales (product_catalog_id, year, month, prov, pieces, value)
+           VALUES (?, 2025, ?, ?, ?, ?)""",
+        [("1", 1, "BG", 10, 100.0), ("2", 1, "BG", 5, 50.0)],
+    )
+    conn.executemany(
+        """INSERT INTO target (product_catalog_id, year, month, prov, pieces)
+           VALUES (?, 2025, 1, 'BG', ?)""",
+        [("1", 12), ("2", 7)],
+    )
+    conn.commit()
+    try:
+        d = build_dashboard_api_payload(conn, year=2025)
+        assert d is not None
+        rows = d.get("productsSeries") or []
+        assert len(rows) == 2
+        by_name = {r["name"]: r for r in rows}
+        assert by_name["A"]["qty"] == 10.0 and by_name["A"]["targetQty"] == 12.0
+        assert by_name["B"]["qty"] == 5.0 and by_name["B"]["targetQty"] == 7.0
+    finally:
+        conn.close()
+
+
 def test_build_dashboard_api_payload_ignores_year_not_in_database():
     """Evita payload null se ?year= punta a un anno senza righe in sales."""
     conn = sqlite3.connect(":memory:")

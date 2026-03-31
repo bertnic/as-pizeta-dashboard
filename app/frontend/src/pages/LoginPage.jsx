@@ -4,10 +4,10 @@ export default function LoginPage() {
   return (
     <div className="auth-screen">
       <div className="auth-card">
-        <div className="auth-logo">
+        <div className="auth-logo auth-logo-login">
           <img className="logo-icon" src={appLogo} alt="Pizeta logo" />
         </div>
-        <p className="auth-subtitle">Sales Intelligence Platform</p>
+        <p className="auth-subtitle">Dashboard Anna Sedran</p>
         <div className="auth-divider" />
         <a href={import.meta.env.BASE_URL + "auth/login"} className="btn-google">
           <svg width="20" height="20" viewBox="0 0 24 24">

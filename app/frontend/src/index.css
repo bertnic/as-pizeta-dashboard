@@ -75,6 +75,8 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:v
   font-family:var(--font-mono); font-size:1.1rem; color:var(--text);
 }
 .logo-icon { width:1.35rem; height:1.35rem; color:var(--accent); line-height:1; object-fit:contain; display:block; }
+.auth-logo.auth-logo-login { width:100%; justify-content:center; }
+.auth-logo.auth-logo-login .logo-icon { width:100%; max-width:280px; height:auto; }
 .logo-text strong { color:var(--accent); }
 
 .auth-subtitle { color:var(--text2); font-size:.85rem; letter-spacing:.05em; text-transform:uppercase; }

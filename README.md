@@ -45,7 +45,7 @@ python3 import_legacy_dashboard_json.py --db "$DATA_DIR/pizeta.sqlite" --merge-u
 
 ### Mart IMS (stesso file dell’app)
 
-Schema mart: **`packages/db/migrations/002_pharma_datamart.sql`**. Opzionale: da **`data/`**, **`etl_build_db.py`** usa **`DATA_DIR`** come Flask e legge **`mono/datalake.xlsx`** (fallback **`mono/datalake/DATABASE.xlsx`**). Esegui prima **`migrate.py`** sullo stesso **`pizeta.sqlite`** se serve schema platform. Dettagli: **[data/README.md](data/README.md)**.
+Schema mart: **`packages/db/migrations/002_pharma_datamart.sql`**. Opzionale: da **`data/`**, **`etl_build_db.py`** usa **`DATA_DIR`** come Flask e legge **`mono/datalake/DATABASE.xlsx`** (path canonico). Esegui prima **`migrate.py`** sullo stesso **`pizeta.sqlite`** se serve schema platform. Dettagli: **[data/README.md](data/README.md)**.
 
 **Bootstrap** (schema + `users.json` opzionale): **`packages/db/scripts/bootstrap_pizeta.py`** — vedi **`packages/db/README.md`**.
 

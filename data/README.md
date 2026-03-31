@@ -6,8 +6,7 @@ Un solo file: **`{DATA_DIR}/pizeta.sqlite`**, come **`db_store`** in Flask: se *
 
 ### Workbook IMS (default mono)
 
-- **`mono/datalake.xlsx`** (se esiste)
-- altrimenti **`mono/datalake/DATABASE.xlsx`**
+- **`mono/datalake/DATABASE.xlsx`** (path canonico)
 
 Override: **`PIZETA_DATABASE_XLSX`** o **`--xlsx`** su **`etl_build_db.py`**.
 
@@ -21,7 +20,7 @@ pip install -r requirements-etl.txt
 python3 etl_build_db.py
 ```
 
-Da mono, senza env: output = **`mono/var/pizeta.sqlite`**, input = **`datalake.xlsx`** o **`datalake/DATABASE.xlsx`**. Convieni **`packages/db/scripts/migrate.py --db …/pizeta.sqlite`** prima del primo run se servono **`users`** e tabelle platform.
+Da mono, senza env: output = **`mono/var/pizeta.sqlite`**, input = **`datalake/DATABASE.xlsx`**. Convieni **`packages/db/scripts/migrate.py --db …/pizeta.sqlite`** prima del primo run se servono **`users`** e tabelle platform.
 
 **`parsers.py`**: parsing fogli / PDF.
 

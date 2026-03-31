@@ -292,6 +292,53 @@ def build_sales_dashboard_dataset(
         {"name": r[0], "qty": float(r[1] or 0), "rev": float(r[2] or 0)} for r in top_rows
     ]
 
+    target_join = ""
+    target_qty_expr = "0"
+    if _table_exists(conn, "target"):
+        target_qty_expr = "COALESCE(SUM(t.pieces), 0)"
+        target_join = """
+        LEFT JOIN (
+            SELECT product_catalog_id, year, month, prov, SUM(pieces) AS pieces
+            FROM target
+            GROUP BY product_catalog_id, year, month, prov
+        ) t
+          ON t.product_catalog_id = s.product_catalog_id
+         AND t.year = s.year
+         AND t.month = s.month
+         AND t.prov = s.prov
+        """
+
+    series_rows = conn.execute(
+        f"""
+        SELECT
+            p.articolo,
+            s.month,
+            COALESCE(NULLIF(TRIM(s.prov), ''), '—') AS prov,
+            SUM(s.pieces) AS qty,
+            SUM(s.value) AS rev,
+            {target_qty_expr} AS target_qty
+        FROM sales s
+        INNER JOIN products p ON s.product_catalog_id = p.catalog_id
+        {target_join}
+        WHERE s.year = ?{pf_sql}{_sql_exclude_pseudo_product("p.articolo")}
+        GROUP BY p.articolo, s.month, COALESCE(NULLIF(TRIM(s.prov), ''), '—')
+        ORDER BY SUM(s.value) DESC
+        """,
+        (y,) + pf_args,
+    ).fetchall()
+    products_series = [
+        {
+            "name": r[0],
+            "month": int(r[1]) if r[1] is not None else None,
+            "prov": (str(r[2]).strip().upper() if r[2] is not None else "") or "—",
+            "qty": float(r[3] or 0),
+            "rev": float(r[4] or 0),
+            "targetQty": float(r[5] or 0),
+        }
+        for r in series_rows
+        if r[0] and r[1] is not None and 1 <= int(r[1]) <= 12
+    ]
+
     catalog_rows = conn.execute(
         f"""
         SELECT p.articolo, SUM(s.pieces), SUM(s.value)
@@ -317,6 +364,7 @@ def build_sales_dashboard_dataset(
         "byProvince": {p: byp[p] for p in prov_sorted},
         "topProducts": top_products,
         "productsCatalog": products_catalog,
+        "productsSeries": products_series,
     }
 
 

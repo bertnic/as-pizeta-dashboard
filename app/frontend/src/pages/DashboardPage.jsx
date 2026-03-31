@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react"
 import { useNavigate } from "react-router-dom"
 import {
   BarChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
+  Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, Scatter,
   ComposedChart,
 } from "recharts"
 import sbLogo from "../assets/logo.svg"
@@ -80,6 +80,7 @@ export default function DashboardPage({ user, setUser }) {
   const [productSearch, setProductSearch] = useState("")
   const [productListOpen, setProductListOpen] = useState(false)
   const [view, setView] = useState("overview") // overview | products
+  const [selectedProductMonth, setSelectedProductMonth] = useState(0) // 0 = all
   const nav = useNavigate()
 
   const productFilterRef = useRef(null)
@@ -296,6 +297,7 @@ export default function DashboardPage({ user, setUser }) {
   const months = mart?.months || []
   const byProv = mart?.byProvince || {}
   const topProds = mart?.topProducts || []
+  const productsSeries = mart?.productsSeries || []
   const qnorm = productSearch.trim().toLowerCase()
   const productSuggestions = pickerCatalog
     .filter(row => !selectedProducts.includes(row.name))
@@ -332,6 +334,35 @@ export default function DashboardPage({ user, setUser }) {
   const targetBy = mart?.target?.byProvince || {}
   const yearOptions = mart?.availableYears?.length ? mart.availableYears : mart?.year != null ? [mart.year] : []
   const chartYear = selectedYear ?? mart?.year ?? new Date().getFullYear()
+
+  const productsRows = useMemo(() => {
+    if (!productsSeries.length) {
+      if (selectedProductMonth > 0) return []
+      return [...topProds]
+        .map((r) => ({
+          name: r.name,
+          qty: Number(r.qty) || 0,
+          rev: Number(r.rev) || 0,
+          targetQty: 0,
+        }))
+        .sort((a, b) => b.rev - a.rev)
+    }
+    const m = new Map()
+    for (const r of productsSeries) {
+      if (!r?.name) continue
+      if (!activeProvs.includes(r.prov)) continue
+      if (selectedProductMonth > 0 && r.month !== selectedProductMonth) continue
+      const cur = m.get(r.name) || { name: r.name, qty: 0, rev: 0, targetQty: 0 }
+      cur.qty += Number(r.qty) || 0
+      cur.rev += Number(r.rev) || 0
+      cur.targetQty += Number(r.targetQty) || 0
+      m.set(r.name, cur)
+    }
+    return [...m.values()].sort((a, b) => b.rev - a.rev)
+  }, [productsSeries, topProds, activeProvs, selectedProductMonth])
+  const productsChartKey = `${selectedProductMonth}-${[...activeProvs].sort().join(",")}-${productsRows
+    .map((r) => `${r.name}:${Number(r.rev || 0).toFixed(2)}`)
+    .join("|")}`
 
   const monthlyData = months.map((m, i) => {
     const obj = { month: m, monthIndex: i }
@@ -542,6 +573,7 @@ export default function DashboardPage({ user, setUser }) {
                       setSelectedProducts([])
                       setPickerCatalog([])
                       setSelectedYear(Number(e.target.value))
+                      setSelectedProductMonth(0)
                     }}
                     disabled={dataLoading}
                   >
@@ -567,8 +599,24 @@ export default function DashboardPage({ user, setUser }) {
                   </button>
                 ))}
               </div>
+              {view === "products" && (
+                <label className="year-select-wrap">
+                  <span className="year-select-label">Mese</span>
+                  <select
+                    className="year-select"
+                    value={selectedProductMonth}
+                    onChange={(e) => setSelectedProductMonth(Number(e.target.value))}
+                    disabled={dataLoading}
+                  >
+                    <option value={0}>Tutti</option>
+                    {months.map((m, i) => (
+                      <option key={m} value={i + 1}>{m}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
-            {pickerCatalog.length > 0 && (
+            {view === "overview" && pickerCatalog.length > 0 && (
               <div className="product-filter" ref={productFilterRef}>
                 <span className="product-filter-label">Prodotti</span>
                 <div className="product-filter-body">
@@ -654,7 +702,7 @@ export default function DashboardPage({ user, setUser }) {
                   Il backend apre <strong>solo</strong> <code style={{ color: "#cbd5e1" }}>DATA_DIR/pizeta.sqlite</code> (utenti + mart).
                   Opzionale: <code style={{ color: "#cbd5e1" }}>etl_build_db.py</code> in{" "}
                   <code style={{ color: "#cbd5e1" }}>apps/dashboard/data/</code> usa lo stesso <code style={{ color: "#cbd5e1" }}>DATA_DIR</code> e
-                  il workbook <code style={{ color: "#cbd5e1" }}>mono/datalake.xlsx</code> (o <code style={{ color: "#cbd5e1" }}>datalake/DATABASE.xlsx</code>).
+                  il workbook <code style={{ color: "#cbd5e1" }}>datalake/DATABASE.xlsx</code>.
                 </p>
                 <p style={{ margin: "0 0 0.85rem" }}>
                   Se nel file già ci sono vendite ma vedi questo messaggio, quasi sempre <code style={{ color: "#cbd5e1" }}>DATA_DIR</code> non
@@ -893,62 +941,51 @@ export default function DashboardPage({ user, setUser }) {
 
         {view === "products" && chartReady && !dataLoading && (
           <>
-            {productFilterActive && (
-              <div
-                className={`filter-active-banner${mart?.filteredEmpty ? " filter-active-banner--warn" : ""}`}
-                role="status"
-              >
-                {mart?.filteredEmpty
-                  ? "Nessun dato per i prodotti selezionati in questo anno."
-                  : `Grafici e tabella: solo i prodotti selezionati (${selectedProducts.length}).`}
+            {productsRows.length === 0 ? (
+              <div className="chart-card" style={{ marginTop: "1rem", padding: "1.4rem" }}>
+                <h3 className="chart-title">
+                  PRODOTTI TOP - PEZZI - <span style={{ color: "#fbbf24" }}>TARGET</span>
+                </h3>
+                <p style={{ color: "#8892a4" }}>
+                  Nessun dato prodotti per i filtri correnti (mese/provincia).
+                </p>
               </div>
-            )}
-            <div className="charts-row" style={{ marginTop: "1rem" }}>
-              <div className="chart-card wide">
-                <h3 className="chart-title">Top Prodotti – Fatturato{productFilterChartSuffix}</h3>
-                <ResponsiveContainer key={`${chartsRemountKey}-tp-rev`} width="100%" height={300}>
-                  <BarChart data={topProds} layout="vertical" margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e2a3a" horizontal={false} />
-                    <XAxis type="number" tick={{ fill: "#6b7a99", fontSize: 11 }} tickFormatter={v => `€${v}`} />
-                    <YAxis dataKey="name" type="category" width={160} tick={{ fill: "#8892a4", fontSize: 11 }} />
-                    <Tooltip formatter={v => `€${v.toFixed(2)}`} />
-                    <Bar dataKey="rev" name="Fatturato" fill={ACCENT} radius={[0, 4, 4, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="chart-card">
-                <h3 className="chart-title">Top Prodotti – Unità{productFilterChartSuffix}</h3>
-                <ResponsiveContainer key={`${chartsRemountKey}-tp-qty`} width="100%" height={300}>
-                  <BarChart data={topProds} layout="vertical" margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+            ) : (
+              <div className="chart-card" style={{ marginTop: "1rem" }}>
+                <h3 className="chart-title">
+                  PRODOTTI TOP - PEZZI - <span style={{ color: "#fbbf24" }}>TARGET</span>
+                </h3>
+                <ResponsiveContainer width="100%" height={Math.max(320, 28 * productsRows.length + 60)}>
+                  <ComposedChart
+                    key={productsChartKey}
+                    data={productsRows}
+                    layout="vertical"
+                    margin={{ top: 6, right: 26, left: 10, bottom: 6 }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e2a3a" horizontal={false} />
                     <XAxis type="number" tick={{ fill: "#6b7a99", fontSize: 11 }} />
-                    <YAxis dataKey="name" type="category" width={160} tick={{ fill: "#8892a4", fontSize: 11 }} />
-                    <Tooltip />
-                    <Bar dataKey="qty" name="Unità" fill="#7b61ff" radius={[0, 4, 4, 0]} />
-                  </BarChart>
+                    <YAxis dataKey="name" type="category" width={220} tick={{ fill: "#8892a4", fontSize: 11 }} />
+                    <Tooltip
+                      formatter={(v, k) =>
+                        k === "targetQty" ? `${Number(v || 0).toLocaleString("it-IT")} target` : `${Number(v || 0).toLocaleString("it-IT")} pezzi`
+                      }
+                    />
+                    <Bar dataKey="qty" name="Pezzi" fill="#7b61ff" radius={[0, 4, 4, 0]} />
+                    <Scatter
+                      dataKey="targetQty"
+                      name="Target"
+                      fill="#fbbf24"
+                      shape={(props) => {
+                        const { cx, cy, payload } = props
+                        if (!payload || !payload.targetQty || payload.targetQty <= 0) return null
+                        return <line x1={cx} y1={cy - 7} x2={cx} y2={cy + 7} stroke="#fbbf24" strokeWidth={3} strokeLinecap="round" />
+                      }}
+                    />
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
-            </div>
+            )}
 
-            {/* Products table */}
-            <div className="table-card" style={{ marginTop: "1.2rem" }}>
-              <h3 className="chart-title">Dettaglio Prodotti{productFilterChartSuffix}</h3>
-              <table className="data-table">
-                <thead>
-                  <tr><th>Prodotto</th><th>Unità</th><th>Fatturato</th><th>Prezzo medio</th></tr>
-                </thead>
-                <tbody>
-                  {[...topProds].sort((a, b) => b.rev - a.rev).map((p, i) => (
-                    <tr key={i}>
-                      <td className="prod-name">{p.name}</td>
-                      <td>{p.qty}</td>
-                      <td>€{p.rev.toLocaleString("it-IT", { minimumFractionDigits: 2 })}</td>
-                      <td>€{p.qty > 0 ? (p.rev / p.qty).toFixed(2) : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </>
         )}
 

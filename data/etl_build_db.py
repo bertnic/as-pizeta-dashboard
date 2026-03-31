@@ -2,7 +2,7 @@
 """
 Crea / aggiorna il mart IMS in ``{DATA_DIR}/pizeta.sqlite`` (stesso file usato da Flask / ``db_store``).
 
-**Sorgente (default in mono):** prima ``mono/datalake.xlsx``, altrimenti ``mono/datalake/DATABASE.xlsx``.
+**Sorgente (default in mono):** ``mono/datalake/DATABASE.xlsx``.
 Override: ``PIZETA_DATABASE_XLSX`` o ``--xlsx``.
 
 **DATA_DIR:** come ``db_store`` — se assente, impostato nel codice a ``mono/var`` (path assoluto); fuori mono va impostato a mano (es. ``/data``).
@@ -55,10 +55,8 @@ def _resolved_data_dir() -> Path:
 def _default_workbook_path() -> Path:
     m = _mono_root()
     if m is not None:
-        primary = m / "datalake.xlsx"
-        legacy = m / "datalake" / "DATABASE.xlsx"
-        return primary if primary.is_file() else legacy
-    return ROOT / "datalake.xlsx"
+        return m / "datalake" / "DATABASE.xlsx"
+    return ROOT / "DATABASE.xlsx"
 
 
 def _default_db_and_xlsx() -> tuple[Path, Path]:
@@ -182,7 +180,7 @@ def main() -> None:
         "--xlsx",
         type=Path,
         default=None,
-        help="Workbook (default: mono/datalake.xlsx o mono/datalake/DATABASE.xlsx)",
+        help="Workbook (default: mono/datalake/DATABASE.xlsx)",
     )
     ap.add_argument(
         "--append",
@@ -199,10 +197,9 @@ def main() -> None:
     xlsx = xlsx.expanduser().resolve()
     if not xlsx.is_file():
         m = _mono_root()
-        alt = f" oppure {m / 'datalake' / 'DATABASE.xlsx'}" if m else ""
         print(
-            f"File Excel mancante: {xlsx}{alt}\n"
-            f"Copia il workbook in mono/datalake.xlsx (o imposta PIZETA_DATABASE_XLSX).",
+            f"File Excel mancante: {xlsx}\n"
+            f"Usa mono/datalake/DATABASE.xlsx (o imposta PIZETA_DATABASE_XLSX).",
             file=sys.stderr,
         )
         sys.exit(1)
