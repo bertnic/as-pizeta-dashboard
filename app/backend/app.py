@@ -33,6 +33,12 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 Session(app)
 
 _AUTH_DEV = os.environ.get("AUTH_MODE", "").lower() == "development"
+_DEFAULT_ALLOWED_EMAILS = "bertnic@gmail.com,sedrananna@gmail.com"
+_ALLOWED_GOOGLE_EMAILS = frozenset(
+    e.strip().lower()
+    for e in os.environ.get("ALLOWED_GOOGLE_EMAILS", _DEFAULT_ALLOWED_EMAILS).split(",")
+    if e.strip()
+)
 
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_host=1, x_proto=1)
 
@@ -91,17 +97,26 @@ def auth_callback():
     userinfo = token.get("userinfo")
     if not userinfo:
         return redirect(url_for("serve", path="") + "#/auth?error=no_userinfo")
-    email = userinfo["email"]
+    email = (userinfo.get("email") or "").strip().lower()
+    if not email:
+        return redirect(url_for("serve", path="") + "#/auth?error=no_email")
+    if not _AUTH_DEV and email not in _ALLOWED_GOOGLE_EMAILS:
+        session.clear()
+        return redirect(url_for("serve", path="") + "#/auth?error=unauthorized_email")
     users = db_store.users_as_dict()
+    display_name = userinfo.get("name", "") or ""
+    picture_url = userinfo.get("picture", "") or ""
     if email not in users:
         totp_secret = pyotp.random_base32()
         db_store.insert_user(
             email,
             totp_secret,
-            userinfo.get("name", "") or "",
-            userinfo.get("picture", "") or "",
+            display_name,
+            picture_url,
         )
-        users = db_store.users_as_dict()
+    else:
+        db_store.update_user_profile(email, display_name, picture_url)
+    users = db_store.users_as_dict()
     session["pending_user"] = {"email": email, "name": users[email]["name"], "picture": users[email]["picture"]}
     session["authenticated"] = False
     return redirect(url_for("serve", path="") + "#/2fa")

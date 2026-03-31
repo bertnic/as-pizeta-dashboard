@@ -192,6 +192,22 @@ def insert_user(email: str, totp_secret: str, name: str, picture: str) -> None:
         conn.close()
 
 
+def update_user_profile(email: str, name: str, picture: str) -> None:
+    """Update display name / picture for an existing user."""
+    ensure_initialized()
+    conn = connect()
+    try:
+        conn.execute(
+            """UPDATE users
+               SET display_name = ?, picture_url = ?
+               WHERE email = ?""",
+            (name, picture, email),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def merge_users_from_json_file(path: Path) -> int:
     """INSERT OR IGNORE from legacy ``users.json`` (email → totp_secret, name, picture). Returns rows inserted."""
     ensure_initialized()
