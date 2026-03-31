@@ -74,7 +74,7 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:v
   display:flex; align-items:center; gap:.6rem;
   font-family:var(--font-mono); font-size:1.1rem; color:var(--text);
 }
-.logo-icon { font-size:1.8rem; color:var(--accent); line-height:1; }
+.logo-icon { width:1.35rem; height:1.35rem; color:var(--accent); line-height:1; object-fit:contain; display:block; }
 .logo-text strong { color:var(--accent); }
 
 .auth-subtitle { color:var(--text2); font-size:.85rem; letter-spacing:.05em; text-transform:uppercase; }
