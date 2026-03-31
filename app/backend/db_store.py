@@ -1,4 +1,11 @@
-"""SQLite persistence for dashboard users and PDF upload rows."""
+"""SQLite persistence for the shared platform DB (``pizeta.sqlite``): users, mart, etc.
+
+The database file is always ``{DATA_DIR}/pizeta.sqlite``.
+
+If **``DATA_DIR``** is not set in the environment, it is **set in code** to ``<mono>/var``
+(absolute path) when the app runs inside the mono tree. Outside mono (e.g. Docker), you must
+set ``DATA_DIR`` explicitly (the image sets ``DATA_DIR=/data``).
+"""
 
 from __future__ import annotations
 
@@ -11,6 +18,32 @@ from pathlib import Path
 _BACKEND_DIR = Path(__file__).resolve().parent
 
 _init_lock = threading.Lock()
+
+
+def _mono_workspace_root() -> Path | None:
+    """If this backend sits under the mono tree, return the mono root (contains ``apps/`` and ``packages/db``)."""
+    for anc in _BACKEND_DIR.parents:
+        if (anc / "packages" / "db" / "migrations").is_dir() and (anc / "apps").is_dir():
+            return anc
+    return None
+
+
+def _resolved_data_dir() -> Path:
+    raw = os.environ.get("DATA_DIR")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    root = _mono_workspace_root()
+    if root is None:
+        raise RuntimeError(
+            "DATA_DIR is not set and the dashboard backend is not inside the mono tree "
+            "(expected an ancestor with packages/db/migrations and apps/). "
+            "Set DATA_DIR to the directory that contains pizeta.sqlite (e.g. /data in Docker)."
+        )
+    var_path = (root / "var").resolve()
+    os.environ["DATA_DIR"] = str(var_path)
+    return var_path
+
+
 _initialized = False
 
 
@@ -20,26 +53,52 @@ def reset_for_testing() -> None:
         _initialized = False
 
 
-def _schema_path() -> Path:
-    env = os.environ.get("DASHBOARD_SCHEMA_SQL")
-    if env:
-        return Path(env)
-    mono = _BACKEND_DIR.parent.parent.parent.parent / "packages" / "db" / "migrations" / "001_dashboard_app.sql"
+def _resolve_migration(name: str) -> Path:
+    env_key = f"DASHBOARD_SCHEMA_{name.replace('.', '_').upper()}"
+    if os.environ.get(env_key):
+        return Path(os.environ[env_key])
+    # mono/apps/dashboard/app/backend -> four parents to mono root
+    mono = _BACKEND_DIR.parent.parent.parent.parent / "packages" / "db" / "migrations" / name
     if mono.is_file():
         return mono
-    bundled = _BACKEND_DIR / "001_dashboard_app.sql"
+    bundled = _BACKEND_DIR / name
     if bundled.is_file():
         return bundled
     raise FileNotFoundError(
-        "Schema SQL not found. Set DASHBOARD_SCHEMA_SQL or add 001_dashboard_app.sql next to db_store.py."
+        f"Missing {name}. Set DASHBOARD_SCHEMA_* or keep files next to db_store.py."
     )
 
 
+def _apply_app_schema(conn: sqlite3.Connection) -> None:
+    for fname in (
+        "001_dashboard_app.sql",
+        "003_platform_new_tables.sql",
+        "004_drop_dashboard_upload.sql",
+    ):
+        conn.executescript(_resolve_migration(fname).read_text(encoding="utf-8"))
+    conn.commit()
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
+def _ensure_datamart_schema(conn: sqlite3.Connection) -> None:
+    """Create IMS mart tables (``002``) if the platform DB was created without ``migrate.py``."""
+    if not _table_exists(conn, "sales"):
+        conn.executescript(
+            _resolve_migration("002_pharma_datamart.sql").read_text(encoding="utf-8")
+        )
+        conn.commit()
+
+
 def database_file_path() -> Path:
-    """Path to the SQLite file (no I/O). Same resolution as connect()."""
-    if raw := os.environ.get("SQLITE_PATH"):
-        return Path(raw)
-    return Path(os.environ.get("DATA_DIR", "/data")) / "pizeta.sqlite"
+    """Path to the SQLite file (no I/O): ``DATA_DIR/pizeta.sqlite`` (see ``_resolved_data_dir``)."""
+    return _resolved_data_dir() / "pizeta.sqlite"
 
 
 def sqlite_path() -> Path:
@@ -49,11 +108,7 @@ def sqlite_path() -> Path:
 
 
 def legacy_users_path() -> Path:
-    return Path(os.environ.get("DATA_DIR", "/data")) / "users.json"
-
-
-def legacy_data_path() -> Path:
-    return Path(os.environ.get("DATA_DIR", "/data")) / "pharma_data.json"
+    return _resolved_data_dir() / "users.json"
 
 
 def connect() -> sqlite3.Connection:
@@ -63,39 +118,23 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
-def _apply_schema(conn: sqlite3.Connection) -> None:
-    sql = _schema_path().read_text(encoding="utf-8")
-    conn.executescript(sql)
-    conn.commit()
-
-
 def _migrate_legacy_json(conn: sqlite3.Connection) -> None:
-    """One-shot import from legacy JSON; uses BEGIN IMMEDIATE so gunicorn workers do not double-migrate."""
+    """One-shot import from legacy ``users.json``; uses BEGIN IMMEDIATE so gunicorn workers do not double-migrate."""
     conn.isolation_level = None
     try:
         conn.execute("BEGIN IMMEDIATE")
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) AS c FROM dashboard_user")
+        cur.execute("SELECT COUNT(*) AS c FROM users")
         user_count = cur.fetchone()["c"]
-        cur.execute("SELECT COUNT(*) AS c FROM dashboard_upload")
-        upload_count = cur.fetchone()["c"]
 
         if user_count == 0 and legacy_users_path().is_file():
             with open(legacy_users_path(), encoding="utf-8") as f:
                 users = json.load(f)
             for email, u in users.items():
                 cur.execute(
-                    """INSERT INTO dashboard_user (email, totp_secret, display_name, picture_url)
+                    """INSERT INTO users (email, totp_secret, display_name, picture_url)
                        VALUES (?, ?, ?, ?)""",
                     (email, u["totp_secret"], u.get("name") or "", u.get("picture") or ""),
-                )
-        if upload_count == 0 and legacy_data_path().is_file():
-            with open(legacy_data_path(), encoding="utf-8") as f:
-                blob = json.load(f)
-            for u in blob.get("uploads") or []:
-                cur.execute(
-                    "INSERT INTO dashboard_upload (label, rows_json) VALUES (?, ?)",
-                    (u["label"], json.dumps(u.get("rows") or [])),
                 )
         conn.commit()
     except Exception:
@@ -112,7 +151,8 @@ def ensure_initialized() -> None:
             return
         conn = connect()
         try:
-            _apply_schema(conn)
+            _apply_app_schema(conn)
+            _ensure_datamart_schema(conn)
             _migrate_legacy_json(conn)
         finally:
             conn.close()
@@ -124,7 +164,7 @@ def users_as_dict() -> dict:
     conn = connect()
     try:
         cur = conn.execute(
-            "SELECT email, totp_secret, display_name, picture_url FROM dashboard_user"
+            "SELECT email, totp_secret, display_name, picture_url FROM users"
         )
         out = {}
         for row in cur.fetchall():
@@ -143,7 +183,7 @@ def insert_user(email: str, totp_secret: str, name: str, picture: str) -> None:
     conn = connect()
     try:
         conn.execute(
-            """INSERT INTO dashboard_user (email, totp_secret, display_name, picture_url)
+            """INSERT INTO users (email, totp_secret, display_name, picture_url)
                VALUES (?, ?, ?, ?)""",
             (email, totp_secret, name, picture),
         )
@@ -152,49 +192,24 @@ def insert_user(email: str, totp_secret: str, name: str, picture: str) -> None:
         conn.close()
 
 
-def get_data_payload() -> dict:
+def merge_users_from_json_file(path: Path) -> int:
+    """INSERT OR IGNORE from legacy ``users.json`` (email → totp_secret, name, picture). Returns rows inserted."""
     ensure_initialized()
+    if not path.is_file():
+        return 0
+    with open(path, encoding="utf-8") as f:
+        blob = json.load(f)
     conn = connect()
     try:
-        cur = conn.execute(
-            "SELECT label, rows_json FROM dashboard_upload ORDER BY id ASC"
-        )
-        uploads = []
-        for row in cur.fetchall():
-            uploads.append(
-                {"label": row["label"], "rows": json.loads(row["rows_json"] or "[]")}
+        before = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
+        for email, u in blob.items():
+            conn.execute(
+                """INSERT OR IGNORE INTO users (email, totp_secret, display_name, picture_url)
+                   VALUES (?, ?, ?, ?)""",
+                (email, u["totp_secret"], u.get("name") or "", u.get("picture") or ""),
             )
-        return {"uploads": uploads}
-    finally:
-        conn.close()
-
-
-def append_upload(label: str, rows: list) -> None:
-    ensure_initialized()
-    conn = connect()
-    try:
-        conn.execute(
-            "INSERT INTO dashboard_upload (label, rows_json) VALUES (?, ?)",
-            (label, json.dumps(rows)),
-        )
         conn.commit()
-    finally:
-        conn.close()
-
-
-def delete_upload_by_index(idx: int) -> bool:
-    ensure_initialized()
-    conn = connect()
-    try:
-        cur = conn.execute(
-            "SELECT id FROM dashboard_upload ORDER BY id ASC LIMIT 1 OFFSET ?",
-            (idx,),
-        )
-        row = cur.fetchone()
-        if not row:
-            return False
-        conn.execute("DELETE FROM dashboard_upload WHERE id = ?", (row["id"],))
-        conn.commit()
-        return True
+        after = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
+        return int(after - before)
     finally:
         conn.close()

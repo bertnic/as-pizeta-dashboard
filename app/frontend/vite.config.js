@@ -5,10 +5,15 @@ export default defineConfig({
   base: '/pizeta/dashboard/',
   plugins: [react()],
   server: {
+    port: 5173,
+    strictPort: true,
     proxy: {
-      '/auth': 'http://localhost:8080',
-      '/api':  'http://localhost:8080',
-    }
+      // Forward full path: Flask ``application`` is mounted at ``/pizeta/dashboard`` (not at ``/``).
+      '/pizeta/dashboard': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+    },
   },
   build: { outDir: 'dist' }
 })

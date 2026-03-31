@@ -9,11 +9,6 @@ RUN npm run build
 # ── Stage 2: Python backend + compiled frontend ────────────────────────────────
 FROM python:3.12-slim
 
-# System deps for pdfplumber
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpoppler-cpp-dev poppler-utils \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
 # Python deps
@@ -21,12 +16,13 @@ COPY app/backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt gunicorn
 
 # App code
-COPY app/backend/app.py app/backend/db_store.py app/backend/001_dashboard_app.sql ./
+COPY app/backend/app.py app/backend/db_store.py app/backend/datamart_summary.py app/backend/001_dashboard_app.sql app/backend/003_platform_new_tables.sql app/backend/004_drop_dashboard_upload.sql ./
 
 # Copy built frontend
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
-# Data volume mount point
+# Data volume mount point (mono layout not present in image → db_store uses /data)
+ENV DATA_DIR=/data
 RUN mkdir -p /data /tmp/flask_sessions
 
 # Non-root user

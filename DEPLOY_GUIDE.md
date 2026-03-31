@@ -117,6 +117,9 @@ L'output del terminale ti indicherà le modifiche da applicare ai record DNS su 
 
 ## Note Aggiuntive e Costi
 
+- **Database (SQLite):** il backend usa **solo** **`DATA_DIR/pizeta.sqlite`** (nel deploy: **`DATA_DIR=/data`** → **`/data/pizeta.sqlite`**). Per lo **schema completo** mono, prepara il file prima del deploy:  
+  `python3 packages/db/scripts/migrate.py --db /data/pizeta.sqlite` (o copia un `pizeta.sqlite` già migrato sul volume).  
+  e opzionalmente **`load_reference_csv.py`** per CSV di riferimento — vedi **`packages/db/README.md`**. Il container continua ad applicare **`001` + `003`** all’avvio se mancano tabelle app.
 - **Costi Server**: L'ambiente Free Tier copre milioni di richieste al mese, portando di fatto il costo per traffico limitato a `€0/mese`.
 - **Primo Accesso (2FA)**: Al primo login verrà generato un QR Code TOTP (da scannerizzare tramite Google Authenticator, Authy o simili). Successivamente ti verrà chiesta l'OTP ad ogni nuovo accesso.
 - **Aggiornamento App**: Per applicare modifiche a React (Vite) / Flask in futuro, sarà sufficiente usare di nuovo `gcloud run deploy --source .` dalla root del repository. Cloud Build aggiornerà automaticamente l'ultima revisione in zero-downtime.

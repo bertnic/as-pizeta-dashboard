@@ -4,6 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "prebuild": "node scripts/sync-logo.mjs",
+    "predev": "sh -c 'lsof -ti :5173 | xargs kill -9 2>/dev/null; lsof -ti :5174 | xargs kill -9 2>/dev/null; exit 0' && node scripts/sync-logo.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"

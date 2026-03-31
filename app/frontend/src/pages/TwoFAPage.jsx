@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { useNavigate } from "react-router-dom"
+import appLogo from "../assets/logo.svg"
 
 export default function TwoFAPage({ setUser }) {
   const [qr, setQr] = useState(null)
@@ -52,8 +53,7 @@ export default function TwoFAPage({ setUser }) {
     <div className="auth-screen">
       <div className="auth-card twofa-card">
         <div className="auth-logo">
-          <span className="logo-icon">⬡</span>
-          <span className="logo-text">Pharma<strong>Analytics</strong></span>
+          <img className="logo-icon" src={appLogo} alt="Pizeta logo" />
         </div>
         <h2 className="twofa-title">Verifica in due passaggi</h2>
         <p className="twofa-desc">Inserisci il codice dalla tua app di autenticazione</p>

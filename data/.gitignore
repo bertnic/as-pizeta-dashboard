@@ -1,5 +1,4 @@
-# Built datamart and secrets (do not commit)
-pharma_datamart.sqlite
+# Local SQLite and secrets (do not commit)
 *.sqlite
 credentials.json
 token.json

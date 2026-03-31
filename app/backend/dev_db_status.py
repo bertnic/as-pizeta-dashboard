@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Show where the dashboard SQLite file is and what is inside (local dev helper).
 
-Run from `app/backend/`:
-  export DATA_DIR="$(cd ../.. && pwd)/var"   # recommended local path
+Run from `app/backend/` (no env needed in a mono checkout — defaults to ``<mono>/var``):
   python dev_db_status.py
 
-Uses the same rules as `db_store` (SQLITE_PATH, DATA_DIR, default /data).
+Uses the same rules as `db_store`: ``DATA_DIR/pizeta.sqlite`` (default ``mono/var`` or ``/data`` in Docker).
 """
 
 from __future__ import annotations
@@ -28,9 +27,8 @@ def main() -> None:
     print()
     if not p.is_file():
         print("No database file yet.")
-        print("  It is created when the Flask app first runs a query (e.g. OAuth callback or /api/data).")
-        print("  For local dev, set DATA_DIR to a writable folder, e.g.:")
-        print('    export DATA_DIR="$(cd ../.. && pwd)/var"')
+        print("  It is created when the Flask app first runs a query (e.g. OAuth callback or /api/datamart/summary).")
+        print("  In a mono checkout the default file is <mono>/var/pizeta.sqlite (override with DATA_DIR).")
         return
 
     conn = sqlite3.connect(str(p))
@@ -40,6 +38,9 @@ def main() -> None:
         )
         tables = [r[0] for r in cur.fetchall() if not r[0].startswith("sqlite_")]
         print("Tables:", ", ".join(tables) if tables else "(none)")
+        if "users" in tables:
+            nu = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            print(f"  (users: {nu} row(s))")
         print()
         for t in tables:
             n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]

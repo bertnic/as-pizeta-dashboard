@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-Create / refresh SQLite datamart and load Excel + PDF from this directory.
+Crea / aggiorna il mart IMS in ``{DATA_DIR}/pizeta.sqlite`` (stesso file usato da Flask / ``db_store``).
 
-Default: workbook canonici (SEDRAN (1).xlsx, SEDRAN DEF..xlsx) + PDF.
-SEDRAN DEF → tabelle TARGET + PRODOTTI (cod opzionale).
+**Sorgente (default in mono):** prima ``mono/datalake.xlsx``, altrimenti ``mono/datalake/DATABASE.xlsx``.
+Override: ``PIZETA_DATABASE_XLSX`` o ``--xlsx``.
 
-Foglio manuale ``1TQAGiWBTbYf9IPUqrhS9DBv5WFftDPqI`` (se presente in un .xlsx caricato):
-  blocchi TARGET / PREZZI|PRODOTTI / FATTURATO → tabelle TARGET, PRODOTTI, FATTURATO.
+**DATA_DIR:** come ``db_store`` — se assente, impostato nel codice a ``mono/var`` (path assoluto); fuori mono va impostato a mano (es. ``/data``).
 
-Usage:
-  python3 etl_build_db.py [--db path] [--all-xlsx] [--append]
+Fogli **VENDITE**, **ARTICOLI**, **TARGET**. Convieni ``packages/db/scripts/migrate.py`` sullo stesso DB
+prima del primo run se servono anche ``users`` e tabelle platform.
+
+Usage::
+
+  python3 etl_build_db.py [--db path] [--xlsx path] [--append]
 """
 
 from __future__ import annotations
@@ -17,26 +20,52 @@ from __future__ import annotations
 import argparse
 import os
 import sqlite3
-from datetime import datetime, timezone
+import sys
 from pathlib import Path
 
-from parsers import (
-    CANONICAL_XLSX_NAMES,
-    iter_rows_from_xlsx,
-    iter_manual_target_prezzi_fatturato,
-    iter_vendite_semi_rows,
-    parse_pdf_monthly,
-    parse_sedran_def_targets_prezzi,
-    read_sedran_def_sheet,
-    is_sedran_def_workbook,
-)
+from parsers import parse_database_mart_workbook, workbook_is_database_mart_v2
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_DB = ROOT / "pharma_datamart.sqlite"
+
+
+def _mono_root() -> Path | None:
+    if ROOT.name != "data" or ROOT.parent.name != "dashboard":
+        return None
+    mono = ROOT.parent.parent.parent
+    if (mono / "packages" / "db").is_dir():
+        return mono
+    return None
+
+
+def _resolved_data_dir() -> Path:
+    raw = os.environ.get("DATA_DIR")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    m = _mono_root()
+    if m is None:
+        raise RuntimeError(
+            "DATA_DIR is not set and etl_build_db is not running inside the mono tree. "
+            "Set DATA_DIR to the directory that contains pizeta.sqlite."
+        )
+    var_path = (m / "var").resolve()
+    os.environ["DATA_DIR"] = str(var_path)
+    return var_path
+
+
+def _default_workbook_path() -> Path:
+    m = _mono_root()
+    if m is not None:
+        primary = m / "datalake.xlsx"
+        legacy = m / "datalake" / "DATABASE.xlsx"
+        return primary if primary.is_file() else legacy
+    return ROOT / "datalake.xlsx"
+
+
+def _default_db_and_xlsx() -> tuple[Path, Path]:
+    return _resolved_data_dir() / "pizeta.sqlite", _default_workbook_path()
 
 
 def schema_path() -> Path:
-    """DDL for the datamart (not the Flask app DB)."""
     if env := os.environ.get("DATAMART_SCHEMA_SQL"):
         return Path(env)
     mono = ROOT.parent.parent.parent / "packages" / "db" / "migrations" / "002_pharma_datamart.sql"
@@ -46,6 +75,7 @@ def schema_path() -> Path:
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -56,78 +86,32 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _trunc_prezzo_2dp(x: float) -> float:
+    return int(float(x) * 100) / 100.0
+
+
 def clear_all(conn: sqlite3.Connection) -> None:
-    for tbl in ("FATTURATO", "PRODOTTI", "TARGET", "fact_measure", "import_batch"):
+    for tbl in ("sales", "products", "target"):
         conn.execute(f"DELETE FROM {tbl}")
     conn.commit()
 
 
-def insert_batch(conn: sqlite3.Connection, source_path: Path, source_kind: str) -> int:
-    cur = conn.execute(
-        """
-        INSERT INTO import_batch (source_path, file_name, source_kind, loaded_at)
-        VALUES (?, ?, ?, ?)
-        """,
-        (
-            str(source_path.resolve()),
-            source_path.name,
-            source_kind,
-            datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        ),
-    )
-    conn.commit()
-    return int(cur.lastrowid)
-
-
-def insert_fact_rows(conn: sqlite3.Connection, batch_id: int, rows: list[dict]) -> int:
+def insert_target_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
     if not rows:
         return 0
     conn.executemany(
         """
-        INSERT INTO fact_measure (
-          batch_id, sheet, geo_code, geo_label, agent_name, hierarchy_level,
-          product_name, year, month, day, metric, value
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO target (
+          product_catalog_id, year, month, prov, pieces
+        ) VALUES (?, ?, ?, ?, ?)
         """,
         [
             (
-                batch_id,
-                r["sheet"],
-                r.get("geo_code"),
-                r.get("geo_label"),
-                r.get("agent_name"),
-                r.get("hierarchy_level"),
-                r.get("product_name"),
-                r.get("year"),
-                r.get("month"),
-                r.get("day"),
-                r["metric"],
-                r["value"],
-            )
-            for r in rows
-        ],
-    )
-    conn.commit()
-    return len(rows)
-
-
-def insert_target_rows(conn: sqlite3.Connection, batch_id: int, rows: list[dict]) -> int:
-    if not rows:
-        return 0
-    conn.executemany(
-        """
-        INSERT INTO TARGET (batch_id, cod, articolo, anno, mese, prov, qta)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            (
-                batch_id,
-                t.get("cod"),
-                t["articolo"],
-                t["anno"],
-                t["mese"],
+                t["product_catalog_id"],
+                t["year"],
+                t["month"],
                 t["prov"],
-                t["qta"],
+                int(t["pieces"]),
             )
             for t in rows
         ],
@@ -136,41 +120,47 @@ def insert_target_rows(conn: sqlite3.Connection, batch_id: int, rows: list[dict]
     return len(rows)
 
 
-def insert_prodotti_rows(conn: sqlite3.Connection, batch_id: int, rows: list[dict]) -> int:
+def insert_prodotti_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
     if not rows:
         return 0
     conn.executemany(
         """
-        INSERT INTO PRODOTTI (batch_id, cod, articolo, prezzo)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT (batch_id, articolo) DO UPDATE SET
-          prezzo = excluded.prezzo,
-          cod = COALESCE(excluded.cod, PRODOTTI.cod)
+        INSERT INTO products (catalog_id, articolo, prezzo)
+        VALUES (?, ?, ?)
+        ON CONFLICT (catalog_id) DO UPDATE SET
+          articolo = excluded.articolo,
+          prezzo = excluded.prezzo
         """,
-        [(batch_id, p.get("cod"), p["articolo"], p["prezzo"]) for p in rows],
+        [
+            (
+                p["catalog_id"],
+                p["articolo"],
+                _trunc_prezzo_2dp(p["prezzo"]),
+            )
+            for p in rows
+        ],
     )
     conn.commit()
     return len(rows)
 
 
-def insert_fatturato_rows(conn: sqlite3.Connection, batch_id: int, rows: list[dict]) -> int:
+def insert_sales_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
     if not rows:
         return 0
     conn.executemany(
         """
-        INSERT INTO FATTURATO (batch_id, cod, articolo, anno, mese, prov, qta, valore)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sales (
+          product_catalog_id, year, month, prov, pieces, value
+        ) VALUES (?, ?, ?, ?, ?, ?)
         """,
         [
             (
-                batch_id,
-                r.get("cod"),
-                r["articolo"],
-                r["anno"],
-                r["mese"],
+                r["product_catalog_id"],
+                r["year"],
+                r["month"],
                 r.get("prov"),
-                r["qta"],
-                r["valore"],
+                int(r["pieces"]),
+                float(r["value"]),
             )
             for r in rows
         ],
@@ -180,76 +170,62 @@ def insert_fatturato_rows(conn: sqlite3.Connection, batch_id: int, rows: list[di
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--db", type=Path, default=DEFAULT_DB)
+    default_db, default_xlsx = _default_db_and_xlsx()
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
-        "--all-xlsx",
-        action="store_true",
-        help="Importa tutti i file .xlsx nella cartella (non solo i canonici)",
+        "--db",
+        type=Path,
+        default=default_db,
+        help="Destinazione (default: DATA_DIR/pizeta.sqlite)",
     )
-    ap.add_argument("--append", action="store_true", help="Non svuotare le tabelle prima del caricamento")
+    ap.add_argument(
+        "--xlsx",
+        type=Path,
+        default=None,
+        help="Workbook (default: mono/datalake.xlsx o mono/datalake/DATABASE.xlsx)",
+    )
+    ap.add_argument(
+        "--append",
+        action="store_true",
+        help="Non svuotare le tabelle prima del caricamento",
+    )
     args = ap.parse_args()
 
-    conn = connect(args.db)
+    xlsx = args.xlsx
+    if xlsx is None:
+        env_x = os.environ.get("PIZETA_DATABASE_XLSX")
+        xlsx = Path(env_x).expanduser().resolve() if env_x else default_xlsx
+
+    xlsx = xlsx.expanduser().resolve()
+    if not xlsx.is_file():
+        m = _mono_root()
+        alt = f" oppure {m / 'datalake' / 'DATABASE.xlsx'}" if m else ""
+        print(
+            f"File Excel mancante: {xlsx}{alt}\n"
+            f"Copia il workbook in mono/datalake.xlsx (o imposta PIZETA_DATABASE_XLSX).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not workbook_is_database_mart_v2(xlsx):
+        print(
+            "Il workbook deve contenere i fogli VENDITE, ARTICOLI, TARGET.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    db_path = args.db.expanduser().resolve()
+    conn = connect(db_path)
     apply_schema(conn)
     if not args.append:
         clear_all(conn)
 
-    xlsx_files = sorted(ROOT.glob("*.xlsx"))
-    if not args.all_xlsx:
-        xlsx_files = [f for f in xlsx_files if f.name in CANONICAL_XLSX_NAMES]
-        missing = CANONICAL_XLSX_NAMES - {f.name for f in xlsx_files}
-        for m in sorted(missing):
-            print(f"Warning: file canonico mancante: {m}")
-
-    total_facts = 0
-    total_target = 0
-    total_prodotti = 0
-    total_fatturato = 0
-
-    for xlsx in xlsx_files:
-        bid = insert_batch(conn, xlsx, "xlsx")
-
-        if is_sedran_def_workbook(xlsx):
-            df = read_sedran_def_sheet(xlsx)
-            if df is not None:
-                tg, pr = parse_sedran_def_targets_prezzi(df)
-                total_target += insert_target_rows(conn, bid, tg)
-                total_prodotti += insert_prodotti_rows(conn, bid, pr)
-                print(
-                    f"{xlsx.name}: batch {bid}, DEF → TARGET={len(tg)} PRODOTTI={len(pr)}"
-                )
-
-        tg_m, pr_m, ft_m = iter_manual_target_prezzi_fatturato(xlsx)
-        if tg_m or pr_m or ft_m:
-            total_target += insert_target_rows(conn, bid, tg_m)
-            total_prodotti += insert_prodotti_rows(conn, bid, pr_m)
-            total_fatturato += insert_fatturato_rows(conn, bid, ft_m)
-            print(
-                f"{xlsx.name}: batch {bid}, foglio manuale 1TQAG… → "
-                f"TARGET+{len(tg_m)} PRODOTTI+{len(pr_m)} FATTURATO+{len(ft_m)}"
-            )
-
-        rows = list(iter_rows_from_xlsx(xlsx))
-        nf = insert_fact_rows(conn, bid, rows)
-        total_facts += nf
-        print(f"{xlsx.name}: batch {bid}, fact_measure={nf}")
-
-        nv = insert_fatturato_rows(conn, bid, iter_vendite_semi_rows(xlsx))
-        total_fatturato += nv
-        if nv:
-            print(f"{xlsx.name}: foglio legacy 1W7R3… → FATTURATO+{nv}")
-
-    for pdf in sorted(ROOT.glob("*.pdf")):
-        rows = parse_pdf_monthly(pdf)
-        bid = insert_batch(conn, pdf, "pdf")
-        nf = insert_fact_rows(conn, bid, rows)
-        total_facts += nf
-        print(f"{pdf.name}: batch {bid}, {nf} measures")
-
+    prows, srows, trows = parse_database_mart_workbook(xlsx)
+    n_p = insert_prodotti_rows(conn, prows)
+    n_s = insert_sales_rows(conn, srows)
+    n_t = insert_target_rows(conn, trows)
     print(
-        f"Done. DB={args.db} fact_measure={total_facts} "
-        f"TARGET={total_target} PRODOTTI_rows={total_prodotti} FATTURATO={total_fatturato}"
+        f"{xlsx.name}: products={n_p} sales={n_s} target={n_t}\n"
+        f"Done. DB={db_path}"
     )
     conn.close()
 

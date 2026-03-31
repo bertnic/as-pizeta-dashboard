@@ -1,10 +1,11 @@
+import appLogo from "../assets/logo.svg"
+
 export default function LoginPage() {
   return (
     <div className="auth-screen">
       <div className="auth-card">
         <div className="auth-logo">
-          <span className="logo-icon">⬡</span>
-          <span className="logo-text">Pharma<strong>Analytics</strong></span>
+          <img className="logo-icon" src={appLogo} alt="Pizeta logo" />
         </div>
         <p className="auth-subtitle">Sales Intelligence Platform</p>
         <div className="auth-divider" />

@@ -1,15 +1,15 @@
-import os, io, re, secrets
+import json
+import os, io, secrets
 from datetime import timedelta
 from pathlib import Path
 from flask import Flask, request, jsonify, session, redirect, url_for, send_from_directory
 from flask_session import Session
 from authlib.integrations.flask_client import OAuth
 import pyotp, qrcode, base64
-from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
-import pdfplumber
 
 import db_store
+from datamart_summary import build_dashboard_api_payload, list_datamart_years
 
 _BACKEND_DIR = Path(__file__).resolve().parent
 # Dev: app/backend/app.py → ../frontend/dist. Docker: /app/app.py → ./frontend/dist
@@ -20,22 +20,51 @@ app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_FILE_DIR"] = "/tmp/flask_sessions"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
-app.config["SESSION_COOKIE_SECURE"] = True
+# Local http://localhost: SESSION_COOKIE_SECURE=False; Cloud Run sets K_SERVICE → default True
+def _session_cookie_secure() -> bool:
+    if (v := os.environ.get("SESSION_COOKIE_SECURE")) is not None:
+        return str(v).lower() in ("1", "true", "yes")
+    return bool(os.environ.get("K_SERVICE"))
+
+
+app.config["SESSION_COOKIE_SECURE"] = _session_cookie_secure()
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 Session(app)
 
+_AUTH_DEV = os.environ.get("AUTH_MODE", "").lower() == "development"
+
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_host=1, x_proto=1)
 
 # --- Google OAuth ---
+_oauth_id = os.environ.get("GOOGLE_CLIENT_ID")
+_oauth_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+if _AUTH_DEV and (not _oauth_id or not _oauth_secret):
+    _oauth_id = _oauth_id or "dev-local.apps.googleusercontent.com"
+    _oauth_secret = _oauth_secret or "dev-local-not-used"
+elif not _oauth_id or not _oauth_secret:
+    raise RuntimeError(
+        "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or AUTH_MODE=development for local UI testing."
+    )
+
 oauth = OAuth(app)
 google = oauth.register(
     name="google",
-    client_id=os.environ["GOOGLE_CLIENT_ID"],
-    client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
+    client_id=_oauth_id,
+    client_secret=_oauth_secret,
     server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
     client_kwargs={"scope": "openid email profile"},
 )
+
+if _AUTH_DEV:
+    @app.before_request
+    def _development_auth_session() -> None:
+        session.permanent = True
+        session["authenticated"] = True
+        session.setdefault(
+            "user",
+            {"email": "dev@local.test", "name": "Local Dev", "picture": ""},
+        )
 
 # --- Auth helpers ---
 def get_current_user():
@@ -119,53 +148,67 @@ def logout():
     session.clear()
     return jsonify({"ok": True})
 
+def _datamart_summary_params():
+    """Return ``(year, product_filter)`` from GET query or POST JSON body."""
+    if request.method == "POST" and request.is_json:
+        body = request.get_json(silent=True) or {}
+        raw_y = body.get("year")
+        if raw_y is not None and raw_y != "":
+            try:
+                y = int(raw_y)
+            except (TypeError, ValueError):
+                y = None
+        else:
+            y = None
+        rp = body.get("products")
+        if not isinstance(rp, list):
+            rp = []
+        raw_products = [x for x in rp if isinstance(x, str)]
+    else:
+        y = request.args.get("year", type=int)
+        raw_products = list(request.args.getlist("product"))
+        if not raw_products:
+            pj = request.args.get("products_json")
+            if pj:
+                try:
+                    parsed = json.loads(pj)
+                    if isinstance(parsed, list):
+                        raw_products = [x for x in parsed if isinstance(x, str)]
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    pass
+    product_filter = frozenset(
+        p.strip() for p in raw_products if isinstance(p, str) and p.strip()
+    ) or None
+    return y, product_filter
+
+
 # --- Data routes ---
-@app.route("/api/data")
+@app.route("/api/datamart/summary", methods=["GET", "POST"])
 @require_auth
-def get_data():
-    return jsonify(db_store.get_data_payload())
-
-@app.route("/api/upload", methods=["POST"])
-@require_auth
-def upload_pdf():
-    if "file" not in request.files:
-        return jsonify({"error": "no file"}), 400
-    f = request.files["file"]
-    if not f.filename.endswith(".pdf"):
-        return jsonify({"error": "only PDF"}), 400
-    label = request.form.get("label", f.filename)
-    rows = parse_pdf(f)
-    db_store.append_upload(label, rows)
-    return jsonify({"ok": True, "rows": len(rows), "label": label})
-
-@app.route("/api/upload/<int:idx>", methods=["DELETE"])
-@require_auth
-def delete_upload(idx):
-    if db_store.delete_upload_by_index(idx):
-        return jsonify({"ok": True})
-    return jsonify({"error": "not found"}), 404
-
-# --- PDF Parser ---
-def parse_pdf(file_obj):
-    rows = []
-    with pdfplumber.open(file_obj) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text() or ""
-            lines = text.split("\n")
-            for line in lines:
-                parts = line.split()
-                if len(parts) < 3:
-                    continue
-                # Try to extract numeric data
-                nums = []
-                for p in parts:
-                    try:
-                        nums.append(float(p.replace(",",".")))
-                    except:
-                        pass
-                if nums:
-                    rows.append({"raw": line, "values": nums})
-    return rows
+def datamart_summary():
+    """IMS vendite da tabella ``sales`` (+ ``target``); ``?year=`` o JSON ``{year, products}``; YoY nel payload."""
+    db_store.ensure_initialized()
+    y, product_filter = _datamart_summary_params()
+    conn = db_store.connect()
+    try:
+        payload = build_dashboard_api_payload(conn, y, product_filter=product_filter)
+        if (
+            _AUTH_DEV
+            and request.args.get("debug") == "1"
+            and payload is not None
+        ):
+            payload = {
+                **payload,
+                "_debug": {
+                    "database": str(db_store.database_file_path()),
+                    "years_in_db": list_datamart_years(conn),
+                },
+            }
+        resp = jsonify(payload if payload is not None else None)
+        resp.headers["Cache-Control"] = "no-store, must-revalidate"
+        return resp
+    finally:
+        conn.close()
 
 # --- Serve React SPA ---
 @app.route("/", defaults={"path": ""})
@@ -191,5 +234,15 @@ application = DispatcherMiddleware(dummy_app, {
 })
 
 if __name__ == "__main__":
+    # Serve the same WSGI stack as Cloud Run (``/pizeta/dashboard`` mount) so local URLs match
+    # ``vite`` ``base`` and built static assets under ``/pizeta/dashboard/...``.
+    from werkzeug.serving import run_simple
+
     port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    run_simple(
+        "0.0.0.0",
+        port,
+        application,
+        use_reloader=False,
+        threaded=True,
+    )
