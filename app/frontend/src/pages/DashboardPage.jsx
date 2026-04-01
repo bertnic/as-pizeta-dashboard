@@ -75,12 +75,15 @@ export default function DashboardPage({ user, setUser }) {
   const [datamartUnauthorized, setDatamartUnauthorized] = useState(false)
   const [activeProvs, setActiveProvs] = useState([...DEFAULT_PROVS])
   const [selectedProducts, setSelectedProducts] = useState([])
+  const [metricMode, setMetricMode] = useState("qty") // qty | rev
   /** Union of product rows seen this year — search/Invio use this so filtering by DIKIROGEN does not drop ZIDOVAL from the picker. */
   const [pickerCatalog, setPickerCatalog] = useState([])
   const [productSearch, setProductSearch] = useState("")
   const [productListOpen, setProductListOpen] = useState(false)
   const [view, setView] = useState("overview") // overview | products
   const [selectedProductMonth, setSelectedProductMonth] = useState(0) // 0 = all
+  /** Vista prodotti: ordina per metrica (fatt./pezzi) o per performance vs target. */
+  const [productsSortMode, setProductsSortMode] = useState("metric") // metric | target
   const nav = useNavigate()
 
   const productFilterRef = useRef(null)
@@ -164,13 +167,15 @@ export default function DashboardPage({ user, setUser }) {
     releaseProvCapture(e)
   }
 
+  const effectiveSelectedProducts = view === "overview" ? selectedProducts : []
   const productSelectionSignature = JSON.stringify([...selectedProducts].sort())
+  const effectiveProductSelectionSignature = JSON.stringify([...effectiveSelectedProducts].sort())
 
   useEffect(() => {
     const baseRaw = import.meta.env.BASE_URL || "/"
     const base = baseRaw.endsWith("/") ? baseRaw : `${baseRaw}/`
     const url = `${base}api/datamart/summary`
-    const products = JSON.parse(productSelectionSignature)
+    const products = JSON.parse(effectiveProductSelectionSignature)
     const ac = new AbortController()
     setDataLoading(true)
 
@@ -231,7 +236,7 @@ export default function DashboardPage({ user, setUser }) {
       })
 
     return () => ac.abort()
-  }, [selectedYear, productSelectionSignature])
+  }, [selectedYear, effectiveProductSelectionSignature])
 
   useEffect(() => {
     if (!mart) return
@@ -335,18 +340,63 @@ export default function DashboardPage({ user, setUser }) {
   const yearOptions = mart?.availableYears?.length ? mart.availableYears : mart?.year != null ? [mart.year] : []
   const chartYear = selectedYear ?? mart?.year ?? new Date().getFullYear()
 
-  const productsRows = useMemo(() => {
+  const sortProductsByRevThenZeros = (rows) =>
+    [...rows].sort((a, b) => {
+      const ar = Number(a.rev) || 0
+      const br = Number(b.rev) || 0
+      const aZero = ar === 0
+      const bZero = br === 0
+      if (aZero !== bZero) return aZero ? 1 : -1
+      if (aZero && bZero) return String(a.name).localeCompare(String(b.name), "it")
+      return br - ar
+    })
+
+  const sortProductsByQtyThenZeros = (rows) =>
+    [...rows].sort((a, b) => {
+      const aq = Number(a.qty) || 0
+      const bq = Number(b.qty) || 0
+      const aZero = aq === 0
+      const bZero = bq === 0
+      if (aZero !== bZero) return aZero ? 1 : -1
+      if (aZero && bZero) return String(a.name).localeCompare(String(b.name), "it")
+      return bq - aq
+    })
+
+  /** Rapporto qty/target (unico dato target API): migliore sopra, senza target in fondo. */
+  const sortProductsByTargetVs = (rows) =>
+    [...rows].sort((a, b) => {
+      const ta = Number(a.targetQty) || 0
+      const tb = Number(b.targetQty) || 0
+      const qa = Number(a.qty) || 0
+      const qb = Number(b.qty) || 0
+      const ra = ta > 0 ? qa / ta : -1
+      const rb = tb > 0 ? qb / tb : -1
+      if (ra < 0 && rb < 0) return String(a.name).localeCompare(String(b.name), "it")
+      if (ra < 0) return 1
+      if (rb < 0) return -1
+      return rb - ra
+    })
+
+  const productsRowsMerged = useMemo(() => {
+    const baseSource =
+      mart?.productsCatalog?.length ? mart.productsCatalog
+      : topProds
+    const baseNames = [...new Set(baseSource.map((r) => r.name).filter(Boolean))]
+    const baseByName = new Map(baseSource.map((r) => [r.name, r]))
+
     if (!productsSeries.length) {
       if (selectedProductMonth > 0) return []
-      return [...topProds]
-        .map((r) => ({
-          name: r.name,
-          qty: Number(r.qty) || 0,
-          rev: Number(r.rev) || 0,
+      return baseNames.map((name) => {
+        const row = baseByName.get(name)
+        return {
+          name,
+          qty: Number(row?.qty) || 0,
+          rev: Number(row?.rev) || 0,
           targetQty: 0,
-        }))
-        .sort((a, b) => b.rev - a.rev)
+        }
+      })
     }
+
     const m = new Map()
     for (const r of productsSeries) {
       if (!r?.name) continue
@@ -358,9 +408,30 @@ export default function DashboardPage({ user, setUser }) {
       cur.targetQty += Number(r.targetQty) || 0
       m.set(r.name, cur)
     }
-    return [...m.values()].sort((a, b) => b.rev - a.rev)
-  }, [productsSeries, topProds, activeProvs, selectedProductMonth])
-  const productsChartKey = `${selectedProductMonth}-${[...activeProvs].sort().join(",")}-${productsRows
+
+    const extraNames = [...m.keys()].filter((n) => !baseNames.includes(n))
+    const orderedNames = [...baseNames, ...extraNames]
+    return orderedNames.map((name) =>
+      m.get(name) || { name, qty: 0, rev: 0, targetQty: 0 },
+    )
+  }, [mart?.productsCatalog, productsSeries, topProds, activeProvs, selectedProductMonth])
+
+  const productsRows = useMemo(() => {
+    const sorted =
+      productsSortMode === "target"
+        ? sortProductsByTargetVs(productsRowsMerged)
+        : metricMode === "rev"
+          ? sortProductsByRevThenZeros(productsRowsMerged)
+          : sortProductsByQtyThenZeros(productsRowsMerged)
+    return sorted.map((r) => ({
+      ...r,
+      targetRevImplied:
+        Number(r.qty) > 0 && Number(r.targetQty) > 0
+          ? (Number(r.rev) / Number(r.qty)) * Number(r.targetQty)
+          : 0,
+    }))
+  }, [productsRowsMerged, productsSortMode, metricMode])
+  const productsChartKey = `${metricMode}-${productsSortMode}-${selectedProductMonth}-${[...activeProvs].sort().join(",")}-${productsRows
     .map((r) => `${r.name}:${Number(r.rev || 0).toFixed(2)}`)
     .join("|")}`
 
@@ -403,26 +474,129 @@ export default function DashboardPage({ user, setUser }) {
   const totalPriorRev = monthlyData.reduce((s, r) => s + r.priorTotalRev, 0)
   const totalPriorQty = monthlyData.reduce((s, r) => s + r.priorTotalQty, 0)
   const totalTargetQty = monthlyData.reduce((s, r) => s + r.targetTotalQty, 0)
+  const elapsedMonthIndexes = months
+    .map((_, i) => i)
+    .filter((i) => isTargetMonthElapsed(chartYear, i))
+  const totalRevElapsed = elapsedMonthIndexes.reduce((s, i) => s + (monthlyData[i]?.totalRev || 0), 0)
+  const totalQtyElapsed = elapsedMonthIndexes.reduce((s, i) => s + (monthlyData[i]?.totalQty || 0), 0)
+  const totalPriorRevElapsed = elapsedMonthIndexes.reduce((s, i) => s + (monthlyData[i]?.priorTotalRev || 0), 0)
+  const totalPriorQtyElapsed = elapsedMonthIndexes.reduce((s, i) => s + (monthlyData[i]?.priorTotalQty || 0), 0)
+  const totalTargetQtyElapsed = elapsedMonthIndexes.reduce((s, i) => s + (monthlyData[i]?.targetTotalQty || 0), 0)
+  /** Con filtro prodotto: il target va confrontato ai mesi in cui c’è stata almeno una vendita (nel periodo trascorso), non a tutti i mesi del calendario con budget (altrimenti mar/apr con 0 vendite ma con target “assorbono” il %). */
+  const totalTargetQtyElapsedInSalesMonths = elapsedMonthIndexes
+    .filter((i) => (monthlyData[i]?.totalQty || 0) > 0)
+    .reduce((s, i) => s + (monthlyData[i]?.targetTotalQty || 0), 0)
   const yoyRevPct =
-    mart?.priorYear && totalPriorRev > 0
-      ? ((totalRev - totalPriorRev) / totalPriorRev) * 100
+    mart?.priorYear && totalPriorRevElapsed > 0
+      ? ((totalRevElapsed - totalPriorRevElapsed) / totalPriorRevElapsed) * 100
       : null
   const yoyQtyPct =
-    mart?.priorYear && totalPriorQty > 0
-      ? ((totalQty - totalPriorQty) / totalPriorQty) * 100
+    mart?.priorYear && totalPriorQtyElapsed > 0
+      ? ((totalQtyElapsed - totalPriorQtyElapsed) / totalPriorQtyElapsed) * 100
       : null
-  const vsTargetQtyPct =
-    mart?.target && totalTargetQty > 0 ? (totalQty / totalTargetQty) * 100 : null
-  const avgMonthRev = months.length ? totalRev / months.length : 0
-  const bestMonth = [...monthlyData].sort((a, b) => b.totalRev - a.totalRev)[0]
+  const vsTargetQtyPct = (() => {
+    if (!mart?.target) return null
+    if (selectedProducts.length > 0) {
+      if (totalTargetQtyElapsedInSalesMonths <= 0) return null
+      return (totalQtyElapsed / totalTargetQtyElapsedInSalesMonths) * 100
+    }
+    if (totalTargetQtyElapsed <= 0) return null
+    return (totalQtyElapsed / totalTargetQtyElapsed) * 100
+  })()
+  const priorRevByMonth = months.map((_, i) => monthlyData[i]?.priorTotalRev || 0)
+  const priorQtyByMonth = months.map((_, i) => monthlyData[i]?.priorTotalQty || 0)
+  const projectionStartIdx = elapsedMonthIndexes.length
+  const projectedRemainingRev = months
+    .map((_, i) => i)
+    .filter((i) => i >= projectionStartIdx)
+    .reduce((s, i) => {
+      const from = Math.max(0, i - 2)
+      const windowVals = priorRevByMonth.slice(from, i + 1).filter((x) => x > 0)
+      if (!windowVals.length) return s
+      const movingAvg = windowVals.reduce((a, b) => a + b, 0) / windowVals.length
+      return s + movingAvg
+    }, 0)
+  const projectedRemainingQty = months
+    .map((_, i) => i)
+    .filter((i) => i >= projectionStartIdx)
+    .reduce((s, i) => {
+      const from = Math.max(0, i - 2)
+      const windowVals = priorQtyByMonth.slice(from, i + 1).filter((x) => x > 0)
+      if (!windowVals.length) return s
+      const movingAvg = windowVals.reduce((a, b) => a + b, 0) / windowVals.length
+      return s + movingAvg
+    }, 0)
+  const estimatedYearEndRev = totalRevElapsed + projectedRemainingRev
+  const estimatedYearEndQty = totalQtyElapsed + projectedRemainingQty
+  /** Media sui soli mesi con attività (>0), non su 12 mesi fissi — altrimenti un prodotto con vendite solo in 2 mesi risultava ~totale/12. */
+  const monthsWithRev = monthlyData.filter((r) => (Number(r.totalRev) || 0) > 0).length
+  const monthsWithQty = monthlyData.filter((r) => (Number(r.totalQty) || 0) > 0).length
+  const avgMonthRev = monthsWithRev > 0 ? totalRev / monthsWithRev : 0
+  const avgMonthQty = monthsWithQty > 0 ? totalQty / monthsWithQty : 0
+  const bestMonthRev = [...monthlyData].sort((a, b) => b.totalRev - a.totalRev)[0]
+  const bestMonthQty = [...monthlyData].sort((a, b) => b.totalQty - a.totalQty)[0]
 
   const pieData = Object.entries(byProv)
     .filter(([p]) => activeProvs.includes(p))
     .map(([p, v]) => ({
       name: p,
-      value: v.rev.reduce((s, x) => s + (x || 0), 0),
+      value:
+        metricMode === "qty"
+          ? v.qty.reduce((s, x) => s + (x || 0), 0)
+          : v.rev.reduce((s, x) => s + (x || 0), 0),
       color: pickProvColor(p),
     }))
+  const allProvincesSelected =
+    provinceList.length > 0 &&
+    activeProvs.length === provinceList.length &&
+    provinceList.every((p) => activeProvs.includes(p))
+  const singleProvinceSelected = activeProvs.length === 1
+  const selectedProvinceCode = singleProvinceSelected ? activeProvs[0] : null
+  const selectedProvinceQty = selectedProvinceCode
+    ? (byProv[selectedProvinceCode]?.qty || []).reduce((s, x) => s + (x || 0), 0)
+    : 0
+  const selectedProvinceRev = selectedProvinceCode
+    ? (byProv[selectedProvinceCode]?.rev || []).reduce((s, x) => s + (x || 0), 0)
+    : 0
+  const selectedProvinceTargetQtyFromSeries = selectedProvinceCode
+    ? productsSeries.reduce((s, r) => {
+        if (!r || r.prov !== selectedProvinceCode) return s
+        const monthIndex0 = Number(r.month || 0) - 1
+        if (monthIndex0 < 0 || !isTargetMonthElapsed(chartYear, monthIndex0)) return s
+        return s + (Number(r.targetQty) || 0)
+      }, 0)
+    : 0
+  const selectedProvinceTargetQtyFallback = selectedProvinceCode
+    ? (targetBy[selectedProvinceCode]?.qty || []).reduce(
+        (s, x, i) => s + (isTargetMonthElapsed(chartYear, i) ? (x || 0) : 0),
+        0,
+      )
+    : 0
+  const selectedProvinceTargetQty =
+    selectedProvinceTargetQtyFromSeries > 0
+      ? selectedProvinceTargetQtyFromSeries
+      : selectedProvinceTargetQtyFallback
+  const showProvincePie = allProvincesSelected
+  const showProvinceTargetPie =
+    metricMode === "qty" && singleProvinceSelected && selectedProvinceTargetQty > 0
+  const hasSidePieChart = showProvincePie || showProvinceTargetPie
+  const allProvinceOverTarget =
+    metricMode === "qty" && Boolean(mart?.target) && totalTargetQty > 0 && totalQty >= totalTargetQty
+  const isOverTarget = selectedProvinceQty > selectedProvinceTargetQty
+  const targetDeltaQty = isOverTarget
+    ? selectedProvinceQty - selectedProvinceTargetQty
+    : selectedProvinceTargetQty - selectedProvinceQty
+  const provinceTargetPieData = showProvinceTargetPie
+    ? isOverTarget
+      ? [
+          { name: "Target budget", value: selectedProvinceTargetQty, color: "#fbbf24" },
+          { name: "Pezzi oltre budget", value: targetDeltaQty, color: "#06d6a0" },
+        ]
+      : [
+          { name: "Pezzi", value: selectedProvinceQty, color: "#7b61ff" },
+          { name: "Mancano al budget", value: targetDeltaQty, color: "#fbbf24" },
+        ]
+    : []
 
   const productFilterActive = selectedProducts.length > 0
   const productFilterChartSuffix = productFilterActive
@@ -550,7 +724,7 @@ export default function DashboardPage({ user, setUser }) {
         {/* Header */}
         <header className="dash-header">
           <div>
-            <h1 className="dash-title">{view === "overview" ? "Vendite Anna Sedran" : "Analisi Prodotti"}</h1>
+            <h1 className="dash-title">{view === "overview" ? "Dashboard Anna Sedran" : "Analisi Prodotti"}</h1>
             <p className="dash-sub">
               {dataLoading
                 ? "Caricamento…"
@@ -560,28 +734,60 @@ export default function DashboardPage({ user, setUser }) {
                       ? "Database senza vendite IMS — importa ETL o collega SQLite"
                       : null}
             </p>
+            <div className="mobile-view-switch" role="tablist" aria-label="Sezioni dashboard">
+              {[["overview", "Overview"], ["products", "Prodotti"]].map(([v, l]) => (
+                <button
+                  key={v}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === v}
+                  className={`mobile-view-btn ${view === v ? "active" : ""}`}
+                  onClick={() => setView(v)}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="dash-header-right">
             <div className="dash-header-controls">
               {yearOptions.length > 0 && (
-                <label className="year-select-wrap">
-                  <span className="year-select-label">Anno</span>
-                  <select
-                    className="year-select"
-                    value={selectedYear ?? mart?.year ?? ""}
-                    onChange={(e) => {
-                      setSelectedProducts([])
-                      setPickerCatalog([])
-                      setSelectedYear(Number(e.target.value))
-                      setSelectedProductMonth(0)
-                    }}
-                    disabled={dataLoading}
-                  >
-                    {yearOptions.map((y) => (
-                      <option key={y} value={y}>{y}</option>
-                    ))}
-                  </select>
-                </label>
+                <div className="year-metric-row">
+                  <label className="year-select-wrap">
+                    <span className="year-select-label">Anno</span>
+                    <select
+                      className="year-select"
+                      value={selectedYear ?? mart?.year ?? ""}
+                      onChange={(e) => {
+                        setSelectedProducts([])
+                        setPickerCatalog([])
+                        setSelectedYear(Number(e.target.value))
+                        setSelectedProductMonth(0)
+                      }}
+                      disabled={dataLoading}
+                    >
+                      {yearOptions.map((y) => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="seg-control" role="group" aria-label="Metrica grafici">
+                    <button
+                      type="button"
+                      className={`prov-btn ${metricMode === "rev" ? "active" : ""}`}
+                      onClick={() => setMetricMode("rev")}
+                    >
+                      Fatturato
+                    </button>
+                    <button
+                      type="button"
+                      className={`prov-btn ${metricMode === "qty" ? "active" : ""}`}
+                      onClick={() => setMetricMode("qty")}
+                    >
+                      Pezzi
+                    </button>
+                  </div>
+                </div>
               )}
               <div className="prov-filters">
                 {provinceListForChips.map(p => (
@@ -738,39 +944,87 @@ export default function DashboardPage({ user, setUser }) {
             {/* KPI row */}
             <div className="kpi-row">
               {[
+                ...(metricMode === "rev"
+                  ? [
+                      {
+                        label: "Fatturato Totale",
+                        val: `€${totalRevElapsed.toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                        sub: productFilterActive ? `${selectedProducts.length} prodotti · mesi attuali` : "mesi attuali",
+                        color: ACCENT,
+                      },
+                      {
+                        label: "Stima Fine Anno (fatt.)",
+                        val: `€${estimatedYearEndRev.toLocaleString("it-IT", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
+                        sub: mart?.priorYear
+                          ? `media mobile su ${mart.priorYear.year}`
+                          : "senza storico",
+                        color: "#22d3ee",
+                      },
+                      ...(mart?.priorYear && yoyRevPct != null
+                        ? [{
+                            label: `vs ${mart.priorYear.year} (fatt.)`,
+                            val: `${yoyRevPct >= 0 ? "+" : ""}${yoyRevPct.toFixed(1)}%`,
+                            sub: `€${totalPriorRevElapsed.toLocaleString("it-IT", { maximumFractionDigits: 0 })} mesi analoghi`,
+                            color: yoyRevPct >= 0 ? "#06d6a0" : "#ff6b6b",
+                          }]
+                        : []),
+                    ]
+                  : [
+                      {
+                        label: "Pezzi totali",
+                        val: totalQtyElapsed.toLocaleString("it-IT"),
+                        sub: productFilterActive ? `${selectedProducts.length} prodotti · mesi attuali` : "mesi attuali",
+                        color: "#7b61ff",
+                      },
+                      {
+                        label: "Stima Fine Anno (pezzi)",
+                        val: estimatedYearEndQty.toLocaleString("it-IT", { maximumFractionDigits: 0 }),
+                        sub: mart?.priorYear
+                          ? `media mobile su ${mart.priorYear.year}`
+                          : "senza storico",
+                        color: "#22d3ee",
+                      },
+                      ...(mart?.priorYear && yoyQtyPct != null
+                        ? [{
+                            label: `vs ${mart.priorYear.year} (pezzi)`,
+                            val: `${yoyQtyPct >= 0 ? "+" : ""}${yoyQtyPct.toFixed(1)}%`,
+                            sub: `${totalPriorQtyElapsed.toLocaleString("it-IT")} pz mesi analoghi`,
+                            color: yoyQtyPct >= 0 ? "#06d6a0" : "#ff6b6b",
+                          }]
+                        : []),
+                      ...(mart?.target && vsTargetQtyPct != null
+                        ? [{
+                            label: "vs target (pezzi)",
+                            val: `${vsTargetQtyPct.toFixed(1)}%`,
+                            sub:
+                              selectedProducts.length > 0
+                                ? `${totalTargetQtyElapsedInSalesMonths.toLocaleString("it-IT")} target (mesi con vendite)`
+                                : `${totalTargetQtyElapsed.toLocaleString("it-IT")} target mesi attuali`,
+                            color: "#fbbf24",
+                          }]
+                        : []),
+                    ]),
                 {
-                  label: "Fatturato Totale",
-                  val: `€${totalRev.toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                  sub: productFilterActive ? `${selectedProducts.length} prodotti` : "periodo selezionato",
-                  color: ACCENT,
+                  label: "Media Mensile",
+                  val:
+                    metricMode === "rev"
+                      ? kpi(avgMonthRev)
+                      : Math.round(avgMonthQty).toLocaleString("it-IT"),
+                  sub:
+                    metricMode === "rev"
+                      ? "€/mese · solo mesi con fatturato"
+                      : "pz/mese · solo mesi con vendite",
+                  color: "#ffd60a",
                 },
-                ...(mart?.priorYear && yoyRevPct != null
-                  ? [{
-                      label: `vs ${mart.priorYear.year} (fatt.)`,
-                      val: `${yoyRevPct >= 0 ? "+" : ""}${yoyRevPct.toFixed(1)}%`,
-                      sub: `€${totalPriorRev.toLocaleString("it-IT", { maximumFractionDigits: 0 })} anno prec.`,
-                      color: yoyRevPct >= 0 ? "#06d6a0" : "#ff6b6b",
-                    }]
-                  : []),
-                { label: "Unità Vendute", val: totalQty.toLocaleString("it-IT"), sub: "pezzi totali", color: "#7b61ff" },
-                ...(mart?.priorYear && yoyQtyPct != null
-                  ? [{
-                      label: `vs ${mart.priorYear.year} (pezzi)`,
-                      val: `${yoyQtyPct >= 0 ? "+" : ""}${yoyQtyPct.toFixed(1)}%`,
-                      sub: `${totalPriorQty.toLocaleString("it-IT")} anno prec.`,
-                      color: "#8892a4",
-                    }]
-                  : []),
-                ...(mart?.target && vsTargetQtyPct != null
-                  ? [{
-                      label: "vs target (pezzi)",
-                      val: `${vsTargetQtyPct.toFixed(1)}%`,
-                      sub: `${totalTargetQty.toLocaleString("it-IT")} target`,
-                      color: "#fbbf24",
-                    }]
-                  : []),
-                { label: "Media Mensile", val: kpi(avgMonthRev), sub: "€/mese", color: "#ffd60a" },
-                { label: "Mese Top", val: bestMonth?.month || "—", sub: `€${bestMonth?.totalRev?.toFixed(0) || 0}`, color: "#ff6b6b" },
+                {
+                  label: "Mese Top",
+                  val: (metricMode === "rev" ? bestMonthRev : bestMonthQty)?.month || "—",
+                  sub:
+                    metricMode === "rev"
+                      ? `€${(bestMonthRev?.totalRev ?? 0).toFixed(0)}`
+                      : `${(bestMonthQty?.totalQty ?? 0).toLocaleString("it-IT")} pz`,
+                  color: "#ff6b6b",
+                },
               ].map((k, i) => (
                 <div className="kpi-card" key={i} style={{ "--accent": k.color }}>
                   <p className="kpi-label">{k.label}</p>
@@ -780,11 +1034,17 @@ export default function DashboardPage({ user, setUser }) {
               ))}
             </div>
 
-            {/* Charts row */}
-            <div className="charts-row">
+            {/* Charts row: solo volumi + pie condizionale */}
+            <div className={`charts-row ${hasSidePieChart ? "" : "charts-row--single"}`.trim()}>
               <div className="chart-card wide">
                 <h3 className="chart-title">
-                  Fatturato Mensile per Provincia
+                  {metricMode === "qty" ? "Volumi Mensili (unità)" : "Fatturato Mensile per Provincia"}
+                  {metricMode === "qty" && mart?.target ? (
+                    <>
+                      {" - "}
+                      <span style={{ color: "#fbbf24", fontWeight: 700 }}>TARGET</span>
+                    </>
+                  ) : null}
                   {mart?.priorYear ? (
                     <>
                       {" - "}
@@ -801,13 +1061,16 @@ export default function DashboardPage({ user, setUser }) {
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e2a3a" />
                     <XAxis dataKey="month" tick={{ fill: "#6b7a99", fontSize: 12 }} interval={0} />
-                    <YAxis tick={{ fill: "#6b7a99", fontSize: 11 }} tickFormatter={v => `€${(v / 1000).toFixed(0)}k`} />
-                    <Tooltip content={fatturatoTotalsTooltip} />
+                    <YAxis
+                      tick={{ fill: "#6b7a99", fontSize: 11 }}
+                      tickFormatter={metricMode === "rev" ? (v) => `€${(v / 1000).toFixed(0)}k` : undefined}
+                    />
+                    <Tooltip content={metricMode === "rev" ? fatturatoTotalsTooltip : volumeTotalsTooltip} />
                     {mart?.priorYear ? (
                       <Area
                         type="monotone"
-                        dataKey="priorTotalRev"
-                        name={`Tot. fatt. ${mart.priorYear.year}`}
+                        dataKey={metricMode === "rev" ? "priorTotalRev" : "priorTotalQty"}
+                        name={metricMode === "rev" ? `Tot. fatt. ${mart.priorYear.year}` : `Tot. pezzi ${mart.priorYear.year}`}
                         stroke="none"
                         fill={CHART_PRIOR_YEAR_ORANGE}
                         fillOpacity={CHART_PRIOR_YEAR_FILL_OPACITY}
@@ -815,119 +1078,143 @@ export default function DashboardPage({ user, setUser }) {
                       />
                     ) : null}
                     {activeProvs.map(p => (
-                      <Bar key={p} dataKey={`${p}_rev`} name={p} stackId="a"
+                      <Bar key={p} dataKey={metricMode === "rev" ? `${p}_rev` : `${p}_qty`} name={p} stackId="vol"
                         fill={pickProvColor(p)} radius={[0, 0, 0, 0]} />
                     ))}
                     {mart?.priorYear ? (
                       <Line
                         type="monotone"
-                        dataKey="priorTotalRev"
-                        name={`Tot. fatt. ${mart.priorYear.year}`}
+                        dataKey={metricMode === "rev" ? "priorTotalRev" : "priorTotalQty"}
+                        name={metricMode === "rev" ? `Tot. fatt. ${mart.priorYear.year}` : `Tot. pezzi ${mart.priorYear.year}`}
                         stroke={CHART_PRIOR_YEAR_ORANGE}
                         strokeWidth={2}
                         strokeDasharray="6 4"
                         dot={false}
                       />
                     ) : null}
+                    {metricMode === "qty" && mart?.target ? (
+                      <Line
+                        type="monotone"
+                        dataKey="targetLineQty"
+                        name={`Target pezzi ${mart.target.year}`}
+                        stroke="#fbbf24"
+                        strokeWidth={2}
+                        strokeDasharray="4 4"
+                        dot={false}
+                        connectNulls={false}
+                      />
+                    ) : null}
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
 
-              <div className="chart-card">
-                <h3 className="chart-title">Quota Fatturato per Provincia</h3>
-                <ResponsiveContainer key={`${chartsRemountKey}-pie`} width="100%" height={260}>
-                  <PieChart>
-                    <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={95}
-                      dataKey="value" nameKey="name" paddingAngle={3}>
-                      {pieData.map((e, i) => (
-                        <Cell key={i} fill={e.color || "#444"} stroke="none" />
-                      ))}
-                    </Pie>
-                    <Legend formatter={(v) => <span style={{ color: "#8892a4" }}>{v}</span>} />
-                    <Tooltip formatter={(v) => `€${v.toLocaleString("it-IT", { minimumFractionDigits: 2 })}`} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+              {showProvincePie && (
+                <div className="chart-card">
+                  <h3 className="chart-title">
+                    {metricMode === "qty" ? "Quota Pezzi per Provincia" : "Quota Fatturato per Provincia"}
+                  </h3>
+                  <div style={{ position: "relative" }}>
+                    <ResponsiveContainer key={`${chartsRemountKey}-pie-province`} width="100%" height={260}>
+                      <PieChart>
+                        <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={95}
+                          dataKey="value" nameKey="name" paddingAngle={3}>
+                          {pieData.map((e, i) => (
+                            <Cell key={i} fill={e.color || "#444"} stroke="none" />
+                          ))}
+                        </Pie>
+                        <Legend formatter={(v) => <span style={{ color: "#8892a4" }}>{v}</span>} />
+                        <Tooltip
+                          formatter={(v) =>
+                            metricMode === "qty"
+                              ? `${Number(v || 0).toLocaleString("it-IT")} pz`
+                              : `€${v.toLocaleString("it-IT", { minimumFractionDigits: 2 })}`
+                          }
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div
+                      aria-hidden="true"
+                      style={{
+                        position: "absolute",
+                        left: "50%",
+                        top: "50%",
+                        transform: "translate(-50%, -58%)",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      <span
+                        className={`material-symbols-outlined pie-mood-icon${
+                          allProvinceOverTarget ? " pie-mood-icon--over" : ""
+                        }`}
+                      >
+                        {allProvinceOverTarget ? "mood" : "sentiment_neutral"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
-            {/* Volume: barre anno corrente (per provincia), linee anno prec. + target */}
-            <div className="chart-card" style={{ marginTop: "1.2rem" }}>
-              <h3 className="chart-title">
-                Volumi Mensili (unità)
-                {mart?.target ? (
-                  <>
-                    {" - "}
-                    <span style={{ color: "#fbbf24", fontWeight: 700 }}>TARGET</span>
-                  </>
-                ) : null}
-                {mart?.priorYear ? (
-                  <>
-                    {" - "}
-                    <span style={{ color: CHART_PRIOR_YEAR_ORANGE, fontWeight: 700 }}>
-                      {mart.priorYear.year}
-                    </span>
-                  </>
-                ) : null}
-              </h3>
-              <ResponsiveContainer key={`${chartsRemountKey}-vol`} width="100%" height={260}>
-                <ComposedChart
-                  data={monthlyData}
-                  margin={{ top: 5, right: 10, left: 4, bottom: 8 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e2a3a" />
-                  <XAxis
-                    dataKey="month"
-                    tick={{ fill: "#6b7a99", fontSize: 12 }}
-                    interval={0}
-                  />
-                  <YAxis tick={{ fill: "#6b7a99", fontSize: 11 }} />
-                  <Tooltip content={volumeTotalsTooltip} />
-                  {mart?.priorYear ? (
-                    <Area
-                      type="monotone"
-                      dataKey="priorTotalQty"
-                      name={`Tot. pezzi ${mart.priorYear.year}`}
-                      stroke="none"
-                      fill={CHART_PRIOR_YEAR_ORANGE}
-                      fillOpacity={CHART_PRIOR_YEAR_FILL_OPACITY}
-                      isAnimationActive={false}
-                    />
-                  ) : null}
-                  {activeProvs.map(p => (
-                    <Bar
-                      key={p}
-                      dataKey={`${p}_qty`}
-                      name={p}
-                      stackId="vol"
-                      fill={pickProvColor(p)}
-                      radius={[0, 0, 0, 0]}
-                    />
-                  ))}
-                  {mart?.priorYear ? (
-                    <Line
-                      type="monotone"
-                      dataKey="priorTotalQty"
-                      name={`Tot. pezzi ${mart.priorYear.year}`}
-                      stroke={CHART_PRIOR_YEAR_ORANGE}
-                      strokeWidth={2}
-                      strokeDasharray="6 4"
-                      dot={false}
-                    />
-                  ) : null}
-                  {mart?.target ? (
-                    <Line
-                      type="monotone"
-                      dataKey="targetLineQty"
-                      name={`Target pezzi ${mart.target.year}`}
-                      stroke="#fbbf24"
-                      strokeWidth={2}
-                      strokeDasharray="4 4"
-                      dot={false}
-                      connectNulls={false}
-                    />
-                  ) : null}
-                </ComposedChart>
-              </ResponsiveContainer>
+              {showProvinceTargetPie && (
+                <div className="chart-card">
+                  <h3 className="chart-title">
+                    Pezzi vs Target {selectedProvinceCode ? `(${selectedProvinceCode})` : ""}
+                  </h3>
+                  <p className="kpi-sub" style={{ marginTop: "-0.25rem", marginBottom: "0.65rem" }}>
+                    Pezzi: {selectedProvinceQty.toLocaleString("it-IT")} · Fatturato: €
+                    {selectedProvinceRev.toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                  <div style={{ position: "relative" }}>
+                    <ResponsiveContainer key={`${chartsRemountKey}-pie-target`} width="100%" height={260}>
+                      <PieChart>
+                        <Pie
+                          data={provinceTargetPieData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={95}
+                          dataKey="value"
+                          nameKey="name"
+                          paddingAngle={3}
+                        >
+                          {provinceTargetPieData.map((e, i) => (
+                            <Cell key={i} fill={e.color || "#444"} stroke="none" />
+                          ))}
+                        </Pie>
+                        <Legend formatter={(v) => <span style={{ color: "#8892a4" }}>{v}</span>} />
+                        <Tooltip formatter={(v) => `${Number(v || 0).toLocaleString("it-IT")} pz`} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div
+                      aria-hidden="true"
+                      style={{
+                        position: "absolute",
+                        left: "50%",
+                        top: "50%",
+                        transform: "translate(-50%, -58%)",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      <span
+                        className={`material-symbols-outlined pie-mood-icon${isOverTarget ? " pie-mood-icon--over" : ""}`}
+                      >
+                        {isOverTarget ? "mood" : "sentiment_neutral"}
+                      </span>
+                    </div>
+                  </div>
+                  <p
+                    className="kpi-sub"
+                    style={{
+                      marginTop: "0.35rem",
+                      color: isOverTarget ? "#06d6a0" : "#fbbf24",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {isOverTarget
+                      ? `Superato budget di ${targetDeltaQty.toLocaleString("it-IT")} pezzi`
+                      : `Mancano ${targetDeltaQty.toLocaleString("it-IT")} pezzi al budget`}
+                  </p>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -941,10 +1228,26 @@ export default function DashboardPage({ user, setUser }) {
 
         {view === "products" && chartReady && !dataLoading && (
           <>
-            {productsRows.length === 0 ? (
+            {productsRowsMerged.length === 0 ? (
               <div className="chart-card" style={{ marginTop: "1rem", padding: "1.4rem" }}>
-                <h3 className="chart-title">
-                  PRODOTTI TOP - PEZZI - <span style={{ color: "#fbbf24" }}>TARGET</span>
+                <h3 className="chart-title chart-title-row">
+                  <span className="chart-title-prefix">PRODOTTI TOP</span>
+                  <span className="chart-title-sep" aria-hidden>—</span>
+                  <button
+                    type="button"
+                    className={`chart-sort-btn ${productsSortMode === "metric" ? "active" : ""}`}
+                    onClick={() => setProductsSortMode("metric")}
+                  >
+                    {metricMode === "rev" ? "FATTURATO" : "PEZZI"}
+                  </button>
+                  <span className="chart-title-sep" aria-hidden>—</span>
+                  <button
+                    type="button"
+                    className={`chart-sort-btn ${productsSortMode === "target" ? "active" : ""}`}
+                    onClick={() => setProductsSortMode("target")}
+                  >
+                    TARGET
+                  </button>
                 </h3>
                 <p style={{ color: "#8892a4" }}>
                   Nessun dato prodotti per i filtri correnti (mese/provincia).
@@ -952,8 +1255,24 @@ export default function DashboardPage({ user, setUser }) {
               </div>
             ) : (
               <div className="chart-card" style={{ marginTop: "1rem" }}>
-                <h3 className="chart-title">
-                  PRODOTTI TOP - PEZZI - <span style={{ color: "#fbbf24" }}>TARGET</span>
+                <h3 className="chart-title chart-title-row">
+                  <span className="chart-title-prefix">PRODOTTI TOP</span>
+                  <span className="chart-title-sep" aria-hidden>—</span>
+                  <button
+                    type="button"
+                    className={`chart-sort-btn ${productsSortMode === "metric" ? "active" : ""}`}
+                    onClick={() => setProductsSortMode("metric")}
+                  >
+                    {metricMode === "rev" ? "FATTURATO" : "PEZZI"}
+                  </button>
+                  <span className="chart-title-sep" aria-hidden>—</span>
+                  <button
+                    type="button"
+                    className={`chart-sort-btn ${productsSortMode === "target" ? "active" : ""}`}
+                    onClick={() => setProductsSortMode("target")}
+                  >
+                    TARGET
+                  </button>
                 </h3>
                 <ResponsiveContainer width="100%" height={Math.max(320, 28 * productsRows.length + 60)}>
                   <ComposedChart
@@ -963,21 +1282,44 @@ export default function DashboardPage({ user, setUser }) {
                     margin={{ top: 6, right: 26, left: 10, bottom: 6 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e2a3a" horizontal={false} />
-                    <XAxis type="number" tick={{ fill: "#6b7a99", fontSize: 11 }} />
+                    <XAxis
+                      type="number"
+                      tick={{ fill: "#6b7a99", fontSize: 11 }}
+                      tickFormatter={metricMode === "rev" ? (v) => `€${(v / 1000).toFixed(0)}k` : undefined}
+                    />
                     <YAxis dataKey="name" type="category" width={220} tick={{ fill: "#8892a4", fontSize: 11 }} />
                     <Tooltip
-                      formatter={(v, k) =>
-                        k === "targetQty" ? `${Number(v || 0).toLocaleString("it-IT")} target` : `${Number(v || 0).toLocaleString("it-IT")} pezzi`
-                      }
+                      formatter={(v, name, item) => {
+                        const key = item?.dataKey
+                        const isTarget = key === "targetQty" || key === "targetRevImplied"
+                        if (isTarget) {
+                          return metricMode === "rev"
+                            ? `€${Number(v || 0).toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} target (stim.)`
+                            : `${Number(v || 0).toLocaleString("it-IT")} target`
+                        }
+                        return metricMode === "rev"
+                          ? `€${Number(v || 0).toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          : `${Number(v || 0).toLocaleString("it-IT")} pezzi`
+                      }}
                     />
-                    <Bar dataKey="qty" name="Pezzi" fill="#7b61ff" radius={[0, 4, 4, 0]} />
+                    <Bar
+                      dataKey={metricMode === "rev" ? "rev" : "qty"}
+                      name={metricMode === "rev" ? "Fatturato" : "Pezzi"}
+                      fill="#7b61ff"
+                      radius={[0, 4, 4, 0]}
+                    />
                     <Scatter
-                      dataKey="targetQty"
+                      dataKey={metricMode === "rev" ? "targetRevImplied" : "targetQty"}
                       name="Target"
                       fill="#fbbf24"
                       shape={(props) => {
                         const { cx, cy, payload } = props
-                        if (!payload || !payload.targetQty || payload.targetQty <= 0) return null
+                        if (!payload) return null
+                        const t =
+                          metricMode === "rev"
+                            ? Number(payload.targetRevImplied) || 0
+                            : Number(payload.targetQty) || 0
+                        if (t <= 0) return null
                         return <line x1={cx} y1={cy - 7} x2={cx} y2={cy + 7} stroke="#fbbf24" strokeWidth={3} strokeLinecap="round" />
                       }}
                     />
